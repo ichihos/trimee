@@ -1,0 +1,50 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "trimee-145be",
+          "appId": "1:1021733410419:android:6e513a41b96fe9fba63c06",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "trimee-145be",
+          "appId": "1:1021733410419:ios:8c8f3f3e972dc989a63c06",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "trimee-145be",
+          "configurations": {
+            "android": "1:1021733410419:android:6e513a41b96fe9fba63c06",
+            "ios": "1:1021733410419:ios:8c8f3f3e972dc989a63c06"
+          }
+        }
+      }
+    }
+  }
+}
