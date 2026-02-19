@@ -146,6 +146,96 @@ class AuthRepository {
     return credential;
   }
 
+  /// 匿名アカウントをGoogleにリンク（UIDを維持）
+  Future<UserCredential> linkWithGoogle() async {
+    final user = _auth.currentUser;
+    if (user == null || !user.isAnonymous) {
+      throw FirebaseAuthException.fromErrorCode('invalid-user');
+    }
+
+    if (kIsWeb) {
+      final googleProvider = GoogleAuthProvider();
+      final credential = await user.linkWithPopup(googleProvider);
+      await _createUserDocument(credential.user!);
+      return credential;
+    } else {
+      final googleSignIn = GoogleSignIn();
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        throw FirebaseAuthException.fromErrorCode('user-cancelled');
+      }
+      final googleAuth = await googleUser.authentication;
+      if (googleAuth.accessToken == null && googleAuth.idToken == null) {
+        throw FirebaseAuthException.fromErrorCode('invalid-credential');
+      }
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      final userCredential = await user.linkWithCredential(credential);
+      await _createUserDocument(userCredential.user!);
+      return userCredential;
+    }
+  }
+
+  /// 匿名アカウントをAppleにリンク（UIDを維持）
+  Future<UserCredential> linkWithApple() async {
+    final user = _auth.currentUser;
+    if (user == null || !user.isAnonymous) {
+      throw FirebaseAuthException.fromErrorCode('invalid-user');
+    }
+
+    if (kIsWeb) {
+      final appleProvider = OAuthProvider('apple.com');
+      appleProvider.addScope('email');
+      appleProvider.addScope('name');
+      final credential = await user.linkWithPopup(appleProvider);
+      await _createUserDocument(credential.user!);
+      return credential;
+    } else {
+      final rawNonce = _generateNonce();
+      final nonce = _sha256ofString(rawNonce);
+      final appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: nonce,
+      );
+      final oauthCredential = OAuthProvider('apple.com').credential(
+        idToken: appleCredential.identityToken,
+        rawNonce: rawNonce,
+      );
+      final userCredential = await user.linkWithCredential(oauthCredential);
+      final displayName = appleCredential.givenName != null
+          ? '${appleCredential.givenName} ${appleCredential.familyName ?? ''}'.trim()
+          : null;
+      await _createUserDocument(userCredential.user!, name: displayName);
+      return userCredential;
+    }
+  }
+
+  /// 匿名アカウントをメール/パスワードにリンク（UIDを維持）
+  Future<UserCredential> linkWithEmail({
+    required String email,
+    required String password,
+    required String name,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null || !user.isAnonymous) {
+      throw FirebaseAuthException.fromErrorCode('invalid-user');
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: password,
+    );
+    final userCredential = await user.linkWithCredential(credential);
+    await userCredential.user!.updateDisplayName(name);
+    await _createUserDocument(userCredential.user!, name: name);
+    return userCredential;
+  }
+
   /// サインアウト
   Future<void> signOut() async {
     // Googleサインアウト

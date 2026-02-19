@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.trimee",
+      "sha256_cert_fingerprints": [
+        "61:5F:C9:EB:9E:FA:F6:6E:83:08:08:36:07:98:B7:08:CD:E1:69:18:82:E0:6F:0D:13:2B:B7:94:D8:9E:DF:2C"
+      ]
+    }
+  }
+]

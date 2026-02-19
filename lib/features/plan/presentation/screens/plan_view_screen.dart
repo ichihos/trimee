@@ -17,6 +17,7 @@ import '../providers/plan_provider.dart';
 import '../widgets/placeholder_action_sheet.dart';
 import '../widgets/plan_map_view.dart';
 import 'plan_edit_screen.dart';
+import 'travel_animation_screen.dart';
 
 /// プラン閲覧画面（読み取り専用）
 class PlanViewScreen extends ConsumerStatefulWidget {
@@ -109,6 +110,12 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
               onPressed: () => Navigator.pop(context),
             ),
             actions: [
+              // 動画出力ボタン
+              IconButton(
+                icon: const Icon(Icons.play_circle_outline, color: Colors.white),
+                onPressed: _showTravelAnimation,
+                tooltip: '旅の軌跡',
+              ),
               // 編集ボタン
               IconButton(
                 icon: const Icon(Icons.edit_outlined, color: Colors.white),
@@ -116,10 +123,12 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                 tooltip: 'プランを編集',
               ),
               // 共有ボタン
-              IconButton(
-                icon: const Icon(Icons.share_outlined, color: Colors.white),
-                onPressed: _sharePlan,
-                tooltip: '共有',
+              Builder(
+                builder: (context) => IconButton(
+                  icon: const Icon(Icons.share_outlined, color: Colors.white),
+                  onPressed: () => _sharePlan(context),
+                  tooltip: '共有',
+                ),
               ),
             ],
             flexibleSpace: FlexibleSpaceBar(
@@ -225,7 +234,28 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     );
   }
 
-  void _sharePlan() {
+  void _showTravelAnimation() {
+    final plan = _currentPlan;
+    final validItems =
+        plan.items.where((i) => i.latitude != null && i.longitude != null).toList();
+    if (validItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('位置情報のあるスポットがありません')),
+      );
+      return;
+    }
+    HapticFeedback.mediumImpact();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => TravelAnimationScreen(
+          items: plan.items,
+          planTitle: plan.title,
+        ),
+      ),
+    );
+  }
+
+  void _sharePlan(BuildContext buttonContext) {
     HapticFeedback.lightImpact();
 
     final plan = _currentPlan;
@@ -276,7 +306,12 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
 
     buf.writeln('trimeeで作成');
 
-    Share.share(buf.toString());
+    final box = buttonContext.findRenderObject() as RenderBox?;
+    final origin = box != null
+        ? box.localToGlobal(Offset.zero) & box.size
+        : Rect.zero;
+
+    Share.share(buf.toString(), sharePositionOrigin: origin);
   }
 }
 

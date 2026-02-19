@@ -73,18 +73,77 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
     });
   }
 
+  /// 匿名アカウントをGoogleにリンク（データ継承）
+  Future<bool> linkWithGoogle() async {
+    state = const AsyncValue.loading();
+    try {
+      await _repository.linkWithGoogle();
+      _finalizeAccountLink();
+      state = const AsyncValue.data(null);
+      return true;
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+      return false;
+    }
+  }
+
+  /// 匿名アカウントをAppleにリンク（データ継承）
+  Future<bool> linkWithApple() async {
+    state = const AsyncValue.loading();
+    try {
+      await _repository.linkWithApple();
+      _finalizeAccountLink();
+      state = const AsyncValue.data(null);
+      return true;
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+      return false;
+    }
+  }
+
+  /// 匿名アカウントをメールにリンク（データ継承）
+  Future<bool> linkWithEmail({
+    required String email,
+    required String password,
+    required String name,
+  }) async {
+    state = const AsyncValue.loading();
+    try {
+      await _repository.linkWithEmail(
+        email: email,
+        password: password,
+        name: name,
+      );
+      _finalizeAccountLink();
+      state = const AsyncValue.data(null);
+      return true;
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+      return false;
+    }
+  }
+
   /// サインアウト
   Future<void> signOut() async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() => _repository.signOut());
   }
 
-  /// ゲストプロファイルをFirestoreに移行
+  /// アカウントリンク完了後の処理（UIDは同じなのでデータ移行不要）
+  void _finalizeAccountLink() {
+    final localProfile = _ref.read(localProfileProvider);
+    if (localProfile != null) {
+      final repository = _ref.read(userProfileRepositoryProvider);
+      repository.saveProfile(localProfile);
+    }
+    _ref.read(guestSessionProvider.notifier).endSession();
+  }
+
+  /// ゲストプロファイルをFirestoreに移行（新規サインイン用）
   Future<void> _migrateGuestProfile(String newUserId) async {
     final localProfile = _ref.read(localProfileProvider);
     if (localProfile == null) return;
 
-    // ローカルプロファイルがあれば、新しいユーザーIDで保存
     final repository = _ref.read(userProfileRepositoryProvider);
     final now = DateTime.now();
     final migratedProfile = localProfile.copyWith(
@@ -93,9 +152,7 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
     );
     await repository.saveProfile(migratedProfile);
 
-    // ゲストセッションを終了
     _ref.read(guestSessionProvider.notifier).endSession();
-    // ローカルプロファイルをクリア
     _ref.read(localProfileProvider.notifier).setProfile(migratedProfile);
   }
 }

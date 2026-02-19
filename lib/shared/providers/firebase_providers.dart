@@ -48,14 +48,17 @@ final currentUserIdProvider = Provider<String?>((ref) {
   return null;
 });
 
-/// ログイン済み（Firebase認証）かどうか
+/// ログイン済み（Google/Apple等の正規認証）かどうか
+/// 匿名認証はゲスト扱いのため除外
 final isAuthenticatedProvider = Provider<bool>((ref) {
   final authState = ref.watch(authStateProvider);
   // ローディング中はFirebase Authの現在のユーザーを直接チェック
   if (authState.isLoading) {
-    return FirebaseAuth.instance.currentUser != null;
+    final user = FirebaseAuth.instance.currentUser;
+    return user != null && !user.isAnonymous;
   }
-  return authState.value != null;
+  final user = authState.value;
+  return user != null && !user.isAnonymous;
 });
 
 /// 現在のユーザー名

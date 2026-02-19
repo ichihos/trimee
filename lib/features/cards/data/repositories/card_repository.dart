@@ -4,7 +4,7 @@ import '../../../../shared/models/card_model.dart';
 /// カードリポジトリ
 class CardRepository {
   CardRepository({required FirebaseFirestore firestore})
-      : _firestore = firestore;
+    : _firestore = firestore;
 
   final FirebaseFirestore _firestore;
 
@@ -45,9 +45,12 @@ class CardRepository {
     return _cardsCollection(tripId)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => CardModel.fromFirestore(doc, tripId))
-            .toList());
+        .map(
+          (snapshot) =>
+              snapshot.docs
+                  .map((doc) => CardModel.fromFirestore(doc, tripId))
+                  .toList(),
+        );
   }
 
   /// カードを取得
@@ -66,9 +69,9 @@ class CardRepository {
     required String userId,
     required ReactionType reaction,
   }) async {
-    await _cardsCollection(tripId).doc(cardId).update({
-      'reactions.$userId': reaction.name,
-    });
+    await _cardsCollection(
+      tripId,
+    ).doc(cardId).update({'reactions.$userId': reaction.name});
   }
 
   /// リアクションを削除
@@ -77,9 +80,21 @@ class CardRepository {
     required String cardId,
     required String userId,
   }) async {
-    await _cardsCollection(tripId).doc(cardId).update({
-      'reactions.$userId': FieldValue.delete(),
-    });
+    await _cardsCollection(
+      tripId,
+    ).doc(cardId).update({'reactions.$userId': FieldValue.delete()});
+  }
+
+  /// カードを更新
+  Future<void> updateCard({
+    required String tripId,
+    required String cardId,
+    required String title,
+    required CardType cardType,
+  }) async {
+    await _cardsCollection(
+      tripId,
+    ).doc(cardId).update({'title': title, 'cardType': cardType.name});
   }
 
   /// カードを削除

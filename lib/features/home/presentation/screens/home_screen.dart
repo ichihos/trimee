@@ -18,7 +18,6 @@ import '../../../plan/presentation/providers/plan_provider.dart';
 import '../../../plan/presentation/screens/plan_edit_screen.dart';
 import '../../../plan/presentation/screens/plan_view_screen.dart';
 import '../../../trip/presentation/providers/trip_provider.dart';
-import '../../../plan/data/repositories/plan_repository.dart';
 
 /// ホーム画面
 class HomeScreen extends ConsumerWidget {
@@ -175,6 +174,14 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
+  /// 入力値からトリップIDを抽出（URLが貼られた場合も対応）
+  String _extractTripId(String input) {
+    // URL形式の場合: https://trimee-ai.com/join/{tripId} or /join/{tripId}
+    final urlMatch = RegExp(r'/join/([^/\s?#]+)').firstMatch(input);
+    if (urlMatch != null) return urlMatch.group(1)!;
+    return input;
+  }
+
   void _showJoinTripDialog(BuildContext context) {
     final controller = TextEditingController();
     showDialog(
@@ -223,7 +230,7 @@ class HomeScreen extends ConsumerWidget {
                   ),
                 ),
                 onSubmitted: (value) {
-                  final tripId = value.trim();
+                  final tripId = _extractTripId(value.trim());
                   if (tripId.isNotEmpty) {
                     Navigator.pop(ctx);
                     context.push('/join/$tripId');
@@ -244,7 +251,7 @@ class HomeScreen extends ConsumerWidget {
             ),
             TextButton(
               onPressed: () {
-                final tripId = controller.text.trim();
+                final tripId = _extractTripId(controller.text.trim());
                 if (tripId.isNotEmpty) {
                   Navigator.pop(ctx);
                   context.push('/join/$tripId');
@@ -271,6 +278,10 @@ class HomeScreen extends ConsumerWidget {
     TripModel trip,
   ) async {
     switch (trip.status) {
+      case TripStatus.lobby:
+        // ロビー画面へ
+        context.go('/trip/${trip.id}/lobby');
+        break;
       case TripStatus.collecting:
       case TripStatus.voting:
         // 編集中のプランがあれば直接編集画面へ
@@ -1401,6 +1412,7 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
+      TripStatus.lobby => ('メンバー待ち', AppColors.textSecondary),
       TripStatus.collecting => ('カード集め中', AppColors.accent),
       TripStatus.voting => (AppStrings.votePending, AppColors.subAccent),
       TripStatus.confirmed => ('確定', AppColors.subAccent),
@@ -1664,7 +1676,8 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
 
     if (!skipUserInfo) {
       // ユーザー情報を確認・収集（手動作成時など）
-      final userInfo = await collectUserInfo(context, ref);
+      // 毎回確認することで、旅ごとに出発地などを変更できるようにする
+      final userInfo = await collectUserInfo(context, ref, forceShow: true);
       if (userInfo == null) {
         if (mounted) setState(() => _isLoading = false);
         return;

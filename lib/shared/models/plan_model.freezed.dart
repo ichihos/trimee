@@ -21,6 +21,7 @@ PlanItem _$PlanItemFromJson(Map<String, dynamic> json) {
 
 /// @nodoc
 mixin _$PlanItem {
+  String get id => throw _privateConstructorUsedError;
   int get day => throw _privateConstructorUsedError;
   String get time => throw _privateConstructorUsedError;
   String get location => throw _privateConstructorUsedError;
@@ -61,6 +62,7 @@ abstract class $PlanItemCopyWith<$Res> {
       _$PlanItemCopyWithImpl<$Res, PlanItem>;
   @useResult
   $Res call({
+    String id,
     int day,
     String time,
     String location,
@@ -92,6 +94,7 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
   @pragma('vm:prefer-inline')
   @override
   $Res call({
+    Object? id = null,
     Object? day = null,
     Object? time = null,
     Object? location = null,
@@ -108,6 +111,11 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
   }) {
     return _then(
       _value.copyWith(
+            id:
+                null == id
+                    ? _value.id
+                    : id // ignore: cast_nullable_to_non_nullable
+                        as String,
             day:
                 null == day
                     ? _value.day
@@ -189,6 +197,7 @@ abstract class _$$PlanItemImplCopyWith<$Res>
   @override
   @useResult
   $Res call({
+    String id,
     int day,
     String time,
     String location,
@@ -219,6 +228,7 @@ class __$$PlanItemImplCopyWithImpl<$Res>
   @pragma('vm:prefer-inline')
   @override
   $Res call({
+    Object? id = null,
     Object? day = null,
     Object? time = null,
     Object? location = null,
@@ -235,6 +245,11 @@ class __$$PlanItemImplCopyWithImpl<$Res>
   }) {
     return _then(
       _$PlanItemImpl(
+        id:
+            null == id
+                ? _value.id
+                : id // ignore: cast_nullable_to_non_nullable
+                    as String,
         day:
             null == day
                 ? _value.day
@@ -309,6 +324,7 @@ class __$$PlanItemImplCopyWithImpl<$Res>
 @JsonSerializable()
 class _$PlanItemImpl implements _PlanItem {
   const _$PlanItemImpl({
+    this.id = '',
     this.day = 1,
     required this.time,
     required this.location,
@@ -327,6 +343,9 @@ class _$PlanItemImpl implements _PlanItem {
   factory _$PlanItemImpl.fromJson(Map<String, dynamic> json) =>
       _$$PlanItemImplFromJson(json);
 
+  @override
+  @JsonKey()
+  final String id;
   @override
   @JsonKey()
   final int day;
@@ -370,7 +389,7 @@ class _$PlanItemImpl implements _PlanItem {
 
   @override
   String toString() {
-    return 'PlanItem(day: $day, time: $time, location: $location, cardId: $cardId, notes: $notes, durationMinutes: $durationMinutes, latitude: $latitude, longitude: $longitude, isPlaceholder: $isPlaceholder, bookingUrl: $bookingUrl, bookingNote: $bookingNote, isBooked: $isBooked, bookingImageUrl: $bookingImageUrl)';
+    return 'PlanItem(id: $id, day: $day, time: $time, location: $location, cardId: $cardId, notes: $notes, durationMinutes: $durationMinutes, latitude: $latitude, longitude: $longitude, isPlaceholder: $isPlaceholder, bookingUrl: $bookingUrl, bookingNote: $bookingNote, isBooked: $isBooked, bookingImageUrl: $bookingImageUrl)';
   }
 
   @override
@@ -378,6 +397,7 @@ class _$PlanItemImpl implements _PlanItem {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is _$PlanItemImpl &&
+            (identical(other.id, id) || other.id == id) &&
             (identical(other.day, day) || other.day == day) &&
             (identical(other.time, time) || other.time == time) &&
             (identical(other.location, location) ||
@@ -406,6 +426,7 @@ class _$PlanItemImpl implements _PlanItem {
   @override
   int get hashCode => Object.hash(
     runtimeType,
+    id,
     day,
     time,
     location,
@@ -437,6 +458,7 @@ class _$PlanItemImpl implements _PlanItem {
 
 abstract class _PlanItem implements PlanItem {
   const factory _PlanItem({
+    final String id,
     final int day,
     required final String time,
     required final String location,
@@ -455,6 +477,8 @@ abstract class _PlanItem implements PlanItem {
   factory _PlanItem.fromJson(Map<String, dynamic> json) =
       _$PlanItemImpl.fromJson;
 
+  @override
+  String get id;
   @override
   int get day;
   @override

@@ -8,7 +8,6 @@ import 'package:trimee/core/constants/app_typography.dart';
 import 'package:trimee/shared/models/chat_model.dart';
 import 'package:trimee/shared/services/chat_service.dart';
 import 'package:trimee/shared/providers/firebase_providers.dart';
-import 'package:trimee/shared/providers/guest_session_provider.dart';
 
 /// チャット＆リアクションオーバーレイ
 class ChatOverlay extends ConsumerStatefulWidget {
@@ -72,13 +71,13 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
     super.dispose();
   }
 
-  // 初期位置を計算 (画面中央右側、見えやすい位置)
+  // 初期位置を計算 (右下、ナビゲーションの上)
   Offset _getInitialPosition(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
-    final paddingBottom = MediaQuery.of(context).padding.bottom;
+    final padding = MediaQuery.of(context).padding;
     return Offset(
-      screenSize.width - 80, // 右端から少し余裕を持たせる
-      screenSize.height * 0.55 - paddingBottom, // 画面の中央やや下
+      screenSize.width / 2 - 24, // 中央（ボタン幅48の半分を引く）
+      screenSize.height - padding.bottom - 100, // 下端から少し上
     );
   }
 
@@ -129,16 +128,15 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
           type: MessageType.text,
         );
     _textController.clear();
+    // キーボードを閉じる
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   @override
   Widget build(BuildContext context) {
-    // ゲストモードの場合はチャット機能を無効化
-    final isGuest = ref.watch(isGuestModeProvider);
-    final isAuthenticated = ref.watch(isAuthenticatedProvider);
-
-    // ゲストで未認証の場合はチャットUIを表示しない
-    if (isGuest && !isAuthenticated) {
+    // セッションがない場合はチャットUIを表示しない
+    final currentUserId = ref.watch(currentUserIdProvider);
+    if (currentUserId == null) {
       return widget.child;
     }
 
@@ -166,13 +164,17 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
     final screenSize = MediaQuery.of(context).size;
     _position ??= _getInitialPosition(context);
 
-    // 画面外に出ないように位置を制限
-    final safeWidth = screenSize.width - 60;
-    final safeHeight = screenSize.height - 100;
+    // 画面外に出ないように位置を制限（SafeArea考慮）
+    final padding = MediaQuery.of(context).padding;
+    final buttonSize = 48.0;
+    final safeLeft = 0.0;
+    final safeTop = padding.top + 8;
+    final safeRight = screenSize.width - buttonSize - 8;
+    final safeBottom = screenSize.height - padding.bottom - buttonSize - 8;
 
     final clampedPosition = Offset(
-      _position!.dx.clamp(0.0, safeWidth),
-      _position!.dy.clamp(0.0, safeHeight),
+      _position!.dx.clamp(safeLeft, safeRight),
+      _position!.dy.clamp(safeTop, safeBottom),
     );
 
     return Stack(
@@ -196,12 +198,16 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
         if (_isChatOpen)
           Positioned(
             right: AppSizes.paddingM,
-            bottom: 100, // ボタンと重ならないように調整
+            left: AppSizes.paddingM,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 12,
             child: _ChatWindow(
               tripId: widget.tripId,
               controller: _textController,
               onSend: _sendMessage,
-              onClose: () => setState(() => _isChatOpen = false),
+              onClose: () {
+                FocusManager.instance.primaryFocus?.unfocus();
+                setState(() => _isChatOpen = false);
+              },
             ),
           ),
 
@@ -447,8 +453,7 @@ class _ChatWindow extends ConsumerWidget {
     final currentUserId = ref.watch(currentUserIdProvider);
 
     return Container(
-      width: 300,
-      height: 400,
+      constraints: const BoxConstraints(maxHeight: 400),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppSizes.radiusL),
@@ -461,6 +466,7 @@ class _ChatWindow extends ConsumerWidget {
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           // ヘッダー
           Container(
@@ -563,24 +569,45 @@ class _ChatWindow extends ConsumerWidget {
           ),
 
           // 入力エリア
-          Padding(
+          Container(
             padding: const EdgeInsets.all(AppSizes.paddingS),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: controller,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: 'メッセージを入力...',
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                      hintStyle: TextStyle(color: AppColors.textSecondary),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppSizes.radiusFull,
+                        ),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: AppColors.background,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      isDense: true,
                     ),
+                    textInputAction: TextInputAction.send,
                     onSubmitted: (_) => onSend(),
                   ),
                 ),
+                const SizedBox(width: 4),
                 IconButton(
-                  icon: const Icon(Icons.send, color: AppColors.accent),
+                  icon: const Icon(Icons.send_rounded, size: 22),
+                  color: AppColors.accent,
                   onPressed: onSend,
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.accent.withValues(alpha: 0.1),
+                  ),
                 ),
               ],
             ),

@@ -9,16 +9,16 @@ const _uuid = Uuid();
 
 /// カードリポジトリプロバイダー
 final cardRepositoryProvider = Provider<CardRepository>((ref) {
-  return CardRepository(
-    firestore: ref.watch(firestoreProvider),
-  );
+  return CardRepository(firestore: ref.watch(firestoreProvider));
 });
 
 /// ゲスト用ローカルカードストレージ
 final localCardsProvider =
-    StateNotifierProvider<LocalCardsNotifier, Map<String, List<CardModel>>>((ref) {
-  return LocalCardsNotifier();
-});
+    StateNotifierProvider<LocalCardsNotifier, Map<String, List<CardModel>>>((
+      ref,
+    ) {
+      return LocalCardsNotifier();
+    });
 
 /// ローカルカードストレージのNotifier
 class LocalCardsNotifier extends StateNotifier<Map<String, List<CardModel>>> {
@@ -50,7 +50,10 @@ class LocalCardsNotifier extends StateNotifier<Map<String, List<CardModel>>> {
       createdAt: DateTime.now(),
     );
     final tripCards = state[tripId] ?? [];
-    state = {...state, tripId: [...tripCards, card]};
+    state = {
+      ...state,
+      tripId: [...tripCards, card],
+    };
     return cardId;
   }
 
@@ -60,16 +63,40 @@ class LocalCardsNotifier extends StateNotifier<Map<String, List<CardModel>>> {
   }
 
   /// リアクションを更新
-  void updateReaction(String tripId, String cardId, String userId, ReactionType reaction) {
+  void updateReaction(
+    String tripId,
+    String cardId,
+    String userId,
+    ReactionType reaction,
+  ) {
     final tripCards = state[tripId] ?? [];
-    final updatedCards = tripCards.map((card) {
-      if (card.id == cardId) {
-        final newReactions = Map<String, ReactionType>.from(card.reactions);
-        newReactions[userId] = reaction;
-        return card.copyWith(reactions: newReactions);
-      }
-      return card;
-    }).toList();
+    final updatedCards =
+        tripCards.map((card) {
+          if (card.id == cardId) {
+            final newReactions = Map<String, ReactionType>.from(card.reactions);
+            newReactions[userId] = reaction;
+            return card.copyWith(reactions: newReactions);
+          }
+          return card;
+        }).toList();
+    state = {...state, tripId: updatedCards};
+  }
+
+  /// カードの内容を更新
+  void updateCardContent(
+    String tripId,
+    String cardId, {
+    required String title,
+    required CardType cardType,
+  }) {
+    final tripCards = state[tripId] ?? [];
+    final updatedCards =
+        tripCards.map((card) {
+          if (card.id == cardId) {
+            return card.copyWith(title: title, cardType: cardType);
+          }
+          return card;
+        }).toList();
     state = {...state, tripId: updatedCards};
   }
 
@@ -81,8 +108,10 @@ class LocalCardsNotifier extends StateNotifier<Map<String, List<CardModel>>> {
 }
 
 /// 旅行のカード一覧プロバイダー
-final tripCardsProvider =
-    StreamProvider.family<List<CardModel>, String>((ref, tripId) {
+final tripCardsProvider = StreamProvider.family<List<CardModel>, String>((
+  ref,
+  tripId,
+) {
   final isGuest = ref.watch(isGuestModeProvider);
   final isAuthenticated = ref.watch(isAuthenticatedProvider);
 
@@ -98,13 +127,15 @@ final tripCardsProvider =
 /// カードコントローラープロバイダー
 final cardControllerProvider =
     StateNotifierProvider<CardController, AsyncValue<void>>((ref) {
-  return CardController(
-    ref: ref,
-    repository: ref.watch(cardRepositoryProvider),
-    currentUserId: ref.watch(currentUserIdProvider),
-    isGuest: ref.watch(isGuestModeProvider) && !ref.watch(isAuthenticatedProvider),
-  );
-});
+      return CardController(
+        ref: ref,
+        repository: ref.watch(cardRepositoryProvider),
+        currentUserId: ref.watch(currentUserIdProvider),
+        isGuest:
+            ref.watch(isGuestModeProvider) &&
+            !ref.watch(isAuthenticatedProvider),
+      );
+    });
 
 /// カードコントローラー
 class CardController extends StateNotifier<AsyncValue<void>> {
@@ -113,11 +144,11 @@ class CardController extends StateNotifier<AsyncValue<void>> {
     required CardRepository repository,
     required String? currentUserId,
     required bool isGuest,
-  })  : _ref = ref,
-        _repository = repository,
-        _currentUserId = currentUserId,
-        _isGuest = isGuest,
-        super(const AsyncValue.data(null));
+  }) : _ref = ref,
+       _repository = repository,
+       _currentUserId = currentUserId,
+       _isGuest = isGuest,
+       super(const AsyncValue.data(null));
 
   final Ref _ref;
   final CardRepository _repository;
@@ -143,16 +174,18 @@ class CardController extends StateNotifier<AsyncValue<void>> {
 
       if (_isGuest) {
         // ゲストユーザーはローカルストレージに保存
-        cardId = _ref.read(localCardsProvider.notifier).addCard(
-          tripId: tripId,
-          title: title,
-          createdBy: userId,
-          cardType: cardType,
-          placeId: placeId,
-          imageUrl: imageUrl,
-          description: description,
-          anonymous: anonymous,
-        );
+        cardId = _ref
+            .read(localCardsProvider.notifier)
+            .addCard(
+              tripId: tripId,
+              title: title,
+              createdBy: userId,
+              cardType: cardType,
+              placeId: placeId,
+              imageUrl: imageUrl,
+              description: description,
+              anonymous: anonymous,
+            );
       } else {
         // 認証済みユーザーはFirebaseに保存
         cardId = await _repository.createCard(
@@ -187,9 +220,9 @@ class CardController extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     try {
       if (_isGuest) {
-        _ref.read(localCardsProvider.notifier).updateReaction(
-          tripId, cardId, userId, reaction,
-        );
+        _ref
+            .read(localCardsProvider.notifier)
+            .updateReaction(tripId, cardId, userId, reaction);
         state = const AsyncValue.data(null);
       } else {
         state = await AsyncValue.guard(
@@ -198,6 +231,40 @@ class CardController extends StateNotifier<AsyncValue<void>> {
             cardId: cardId,
             userId: userId,
             reaction: reaction,
+          ),
+        );
+      }
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  /// カードを更新
+  Future<void> updateCard({
+    required String tripId,
+    required String cardId,
+    required String title,
+    required CardType cardType,
+  }) async {
+    state = const AsyncValue.loading();
+    try {
+      if (_isGuest) {
+        _ref
+            .read(localCardsProvider.notifier)
+            .updateCardContent(
+              tripId,
+              cardId,
+              title: title,
+              cardType: cardType,
+            );
+        state = const AsyncValue.data(null);
+      } else {
+        state = await AsyncValue.guard(
+          () => _repository.updateCard(
+            tripId: tripId,
+            cardId: cardId,
+            title: title,
+            cardType: cardType,
           ),
         );
       }

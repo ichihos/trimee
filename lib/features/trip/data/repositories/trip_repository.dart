@@ -41,7 +41,7 @@ class TripRepository {
       memberDetails: memberDetails,
       startDate: startDate,
       endDate: endDate,
-      status: TripStatus.collecting,
+      status: TripStatus.lobby,
       createdAt: now,
       updatedAt: now,
     );

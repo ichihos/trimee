@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "5V8LL38C2D.com.ichihos.trimee",
+        "paths": [
+          "/join/*"
+        ]
+      }
+    ]
+  }
+}

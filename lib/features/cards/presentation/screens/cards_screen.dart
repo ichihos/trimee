@@ -43,6 +43,22 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
     // ユーザー情報チェックを次のフレームで実行
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkUserInfo();
+      _listenForStatusChange();
+    });
+  }
+
+  /// ステータス変更を監視して、全メンバーを同期遷移させる
+  void _listenForStatusChange() {
+    ref.listenManual(tripDetailProvider(widget.tripId), (previous, next) {
+      final trip = next.valueOrNull;
+      if (trip == null) return;
+      // collectingから別ステータスに変わったら遷移
+      final prevStatus = previous?.valueOrNull?.status;
+      if (prevStatus == TripStatus.collecting &&
+          trip.status != TripStatus.collecting &&
+          mounted) {
+        context.go('/trip/${widget.tripId}/plan');
+      }
     });
   }
 
@@ -606,6 +622,17 @@ class _CardItemState extends ConsumerState<_CardItem>
         );
   }
 
+  void _editCard() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder:
+          (context) =>
+              _AddCardSheet(tripId: widget.tripId, editingCard: widget.card),
+    );
+  }
+
   Future<void> _deleteCard() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -705,6 +732,7 @@ class _CardItemState extends ConsumerState<_CardItem>
           child: const Icon(Icons.delete_outline, color: Colors.white),
         ),
         child: GestureDetector(
+          onTap: isOwnCard ? () => _editCard() : null,
           onLongPress: isOwnCard ? _deleteCard : null,
           child: Container(
             margin: const EdgeInsets.symmetric(
@@ -935,7 +963,7 @@ class _GeneratePlanFAB extends ConsumerWidget {
       orElse: () => 0,
     );
 
-    void onPressed() {
+    void onPressed() async {
       if (cardCount < 3) {
         // 3枚未満の場合は警告ダイアログを表示
         showDialog(
@@ -961,7 +989,50 @@ class _GeneratePlanFAB extends ConsumerWidget {
               ),
         );
       } else {
-        context.go('/trip/$tripId/plan');
+        // 確認ダイアログ
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder:
+              (ctx) => AlertDialog(
+                backgroundColor: AppColors.cardBackground,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppSizes.radiusL),
+                ),
+                title: Text('AIプラン生成を開始', style: AppTypography.titleMedium),
+                content: Text('メンバー全員が移動します', style: AppTypography.bodyMedium),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(
+                      'キャンセル',
+                      style: AppTypography.labelMedium.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(
+                      '生成する',
+                      style: AppTypography.labelMedium.copyWith(
+                        color: AppColors.accent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+        );
+
+        if (confirmed != true) return;
+
+        // Firestoreのステータスを更新 → 全メンバーが自動遷移
+        await ref
+            .read(tripControllerProvider.notifier)
+            .updateStatus(tripId, TripStatus.voting);
+        if (context.mounted) {
+          context.go('/trip/$tripId/plan');
+        }
       }
     }
 
@@ -1209,9 +1280,10 @@ class _InviteSheet extends ConsumerWidget {
 
 /// カード追加シート
 class _AddCardSheet extends ConsumerStatefulWidget {
-  const _AddCardSheet({required this.tripId});
+  const _AddCardSheet({required this.tripId, this.editingCard});
 
   final String tripId;
+  final CardModel? editingCard;
 
   @override
   ConsumerState<_AddCardSheet> createState() => _AddCardSheetState();
@@ -1222,6 +1294,18 @@ class _AddCardSheetState extends ConsumerState<_AddCardSheet> {
   CardType _selectedCardType = CardType.confirmed;
   bool _isAnonymous = false;
   bool _isLoading = false;
+
+  bool get _isEditing => widget.editingCard != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.editingCard != null) {
+      _titleController.text = widget.editingCard!.title;
+      _selectedCardType = widget.editingCard!.cardType;
+      _isAnonymous = widget.editingCard!.anonymous;
+    }
+  }
 
   @override
   void dispose() {
@@ -1378,9 +1462,10 @@ class _AddCardSheetState extends ConsumerState<_AddCardSheet> {
 
           const SizedBox(height: AppSizes.paddingL),
 
-          // 追加ボタン
+          // 追加/更新ボタン
           ElevatedButton(
-            onPressed: _isLoading ? null : _addCard,
+            onPressed:
+                _isLoading ? null : (_isEditing ? _updateCard : _addCard),
             style: ElevatedButton.styleFrom(
               backgroundColor:
                   _selectedCardType.isNegative
@@ -1399,7 +1484,7 @@ class _AddCardSheetState extends ConsumerState<_AddCardSheet> {
                       ),
                     )
                     : Text(
-                      '追加する',
+                      _isEditing ? '更新する' : '追加する',
                       style: AppTypography.button.copyWith(color: Colors.white),
                     ),
           ),
@@ -1447,6 +1532,32 @@ class _AddCardSheetState extends ConsumerState<_AddCardSheet> {
             title: title,
             cardType: _selectedCardType,
             anonymous: _isAnonymous,
+          );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _updateCard() async {
+    final title = _titleController.text.trim();
+    if (title.isEmpty) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      await ref
+          .read(cardControllerProvider.notifier)
+          .updateCard(
+            tripId: widget.tripId,
+            cardId: widget.editingCard!.id,
+            title: title,
+            cardType: _selectedCardType,
           );
 
       if (mounted) {

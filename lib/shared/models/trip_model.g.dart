@@ -54,6 +54,7 @@ Map<String, dynamic> _$$TripModelImplToJson(_$TripModelImpl instance) =>
     };
 
 const _$TripStatusEnumMap = {
+  TripStatus.lobby: 'lobby',
   TripStatus.collecting: 'collecting',
   TripStatus.voting: 'voting',
   TripStatus.confirmed: 'confirmed',

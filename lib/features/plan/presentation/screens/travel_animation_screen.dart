@@ -27,17 +27,14 @@ class TravelAnimationScreen extends ConsumerStatefulWidget {
 class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     with TickerProviderStateMixin {
   MapboxMap? _mapboxMap;
-  // Annotation managers kept for potential future cleanup
-  // ignore: unused_field
-  PolylineAnnotationManager? _polylineAnnotationManager;
-  // ignore: unused_field
-  CircleAnnotationManager? _circleAnnotationManager;
-
   bool _isPlaying = false;
   bool _showIntro = true;
   bool _showOutro = false;
+  bool _isTransiting = false;
+  bool _showCard = true;
   int _currentStep = 0;
   Timer? _animationTimer;
+  String _currentTransitEmoji = '🚗';
 
   bool _isRecording = false;
   bool _isExportAvailable = false;
@@ -45,6 +42,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   late AnimationController _introController;
   late AnimationController _cardController;
   late AnimationController _outroController;
+  late AnimationController _transitController;
 
   List<PlanItem> get _validItems =>
       widget.items
@@ -68,6 +66,10 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     );
     _outroController = AnimationController(
       duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+    _transitController = AnimationController(
+      duration: const Duration(milliseconds: 3000),
       vsync: this,
     );
 
@@ -131,6 +133,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     _introController.dispose();
     _cardController.dispose();
     _outroController.dispose();
+    _transitController.dispose();
     super.dispose();
   }
 
@@ -157,40 +160,15 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   Future<void> _drawRoute() async {
     if (_mapboxMap == null) return;
 
-    final positions =
-        _validItems.map((i) => Position(i.longitude!, i.latitude!)).toList();
-    if (positions.isEmpty) return;
-
-    // ルート線（グロー効果: 太い半透明の下地 + 細いメイン線）
-    final polyManager =
-        await _mapboxMap!.annotations.createPolylineAnnotationManager();
-    _polylineAnnotationManager = polyManager;
-
-    // 下地のグロー線
-    await polyManager.create(
-      PolylineAnnotationOptions(
-        geometry: LineString(coordinates: positions),
-        lineColor: AppColors.accent.withValues(alpha: 0.3).toARGB32(),
-        lineWidth: 10.0,
-        lineOpacity: 0.5,
-        lineJoin: LineJoin.ROUND,
-      ),
-    );
-    // メイン線
-    await polyManager.create(
-      PolylineAnnotationOptions(
-        geometry: LineString(coordinates: positions),
-        lineColor: AppColors.accent.toARGB32(),
-        lineWidth: 3.5,
-        lineOpacity: 0.9,
-        lineJoin: LineJoin.ROUND,
-      ),
-    );
+    if (_validItems.isEmpty) return;
 
     // スポットマーカー（CircleAnnotation）
     final circleManager =
         await _mapboxMap!.annotations.createCircleAnnotationManager();
-    _circleAnnotationManager = circleManager;
+
+    // 番号付きテキストラベル（PointAnnotation）
+    final pointManager =
+        await _mapboxMap!.annotations.createPointAnnotationManager();
 
     for (var i = 0; i < _validItems.length; i++) {
       final item = _validItems[i];
@@ -200,10 +178,10 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
           geometry: Point(
             coordinates: Position(item.longitude!, item.latitude!),
           ),
-          circleRadius: 10.0,
+          circleRadius: 11.0,
           circleColor: Colors.white.toARGB32(),
-          circleOpacity: 0.9,
-          circleStrokeWidth: 2.5,
+          circleOpacity: 0.95,
+          circleStrokeWidth: 3.0,
           circleStrokeColor: AppColors.accent.toARGB32(),
         ),
       );
@@ -213,9 +191,23 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
           geometry: Point(
             coordinates: Position(item.longitude!, item.latitude!),
           ),
-          circleRadius: 5.0,
+          circleRadius: 6.0,
           circleColor: AppColors.accent.toARGB32(),
           circleOpacity: 1.0,
+        ),
+      );
+      // 番号ラベル
+      await pointManager.create(
+        PointAnnotationOptions(
+          geometry: Point(
+            coordinates: Position(item.longitude!, item.latitude!),
+          ),
+          textField: '${i + 1}',
+          textSize: 11.0,
+          textColor: Colors.white.toARGB32(),
+          textHaloColor: AppColors.accent.toARGB32(),
+          textHaloWidth: 1.5,
+          textOffset: [0.0, -2.2],
         ),
       );
     }
@@ -251,6 +243,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     setState(() {
       _showIntro = false;
       _showOutro = false;
+      _isTransiting = false;
       _isPlaying = true;
     });
     _animateToStep(_currentStep);
@@ -270,6 +263,8 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     setState(() {
       _currentStep = step;
       _showOutro = false;
+      _isTransiting = false;
+      _showCard = true;
     });
 
     if (_isPlaying) {
@@ -306,24 +301,40 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
       _outroController.forward(from: 0);
       HapticFeedback.mediumImpact();
 
-      // 録画中なら自動停止して保存
       if (_isRecording) {
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) _stopExportAndSave();
+        // 録画中: アウトロ表示後に停止 → 全体表示
+        Future.delayed(const Duration(seconds: 1), () async {
+          if (mounted) await _stopExportAndSave();
+          if (mounted) _fitToBounds();
+        });
+      } else {
+        // 通常再生: アウトロ表示後に全体表示
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) _fitToBounds();
         });
       }
-
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) _fitToBounds();
-      });
       return;
     }
 
-    setState(() => _currentStep = step);
-    _cardController.forward(from: 0);
-
     final item = _validItems[step];
     final isFirst = step == 0;
+    final cameraDuration = isFirst ? 2500 : 3000;
+
+    setState(() {
+      _currentStep = step;
+      _showCard = false;
+    });
+
+    // 最初のスポット以外はトランジットオーバーレイを表示
+    if (!isFirst) {
+      final from = _validItems[step - 1];
+      setState(() {
+        _isTransiting = true;
+        _currentTransitEmoji = _transitEmoji(from, item);
+      });
+      _transitController.duration = Duration(milliseconds: cameraDuration);
+      _transitController.forward(from: 0);
+    }
 
     await _mapboxMap!.flyTo(
       CameraOptions(
@@ -333,16 +344,33 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
         bearing:
             step > 0 ? _calculateBearing(_validItems[step - 1], item) : 0.0,
       ),
-      MapAnimationOptions(duration: isFirst ? 2500 : 3000, startDelay: 0),
+      MapAnimationOptions(duration: cameraDuration, startDelay: 0),
     );
 
     HapticFeedback.selectionClick();
 
-    _animationTimer = Timer(Duration(seconds: isFirst ? 4 : 5), () {
-      if (mounted && _isPlaying) {
-        _animateToStep(step + 1);
-      }
-    });
+    // カメラ移動完了後にトランジット非表示 → カード表示 → 閲覧時間後に次へ
+    _animationTimer = Timer(
+      Duration(milliseconds: cameraDuration),
+      () {
+        if (!mounted) return;
+        setState(() {
+          _isTransiting = false;
+          _showCard = true;
+        });
+        _cardController.forward(from: 0);
+
+        // カード閲覧時間(1500ms)後に次のステップへ
+        _animationTimer = Timer(
+          const Duration(milliseconds: 1500),
+          () {
+            if (mounted && _isPlaying) {
+              _animateToStep(step + 1);
+            }
+          },
+        );
+      },
+    );
   }
 
   double _calculateBearing(PlanItem from, PlanItem to) {
@@ -516,8 +544,16 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
               onExport: _isExportAvailable ? _startExport : null,
             ),
 
+          // トランジットオーバーレイ（スポット間移動中）
+          if (_isTransiting)
+            _TransitOverlay(
+              controller: _transitController,
+              emoji: _currentTransitEmoji,
+              toName: _validItems[_currentStep].location,
+            ),
+
           // スポットカード（再生中 or 停止中で選択スポットあり）
-          if (!_showIntro && !_showOutro && _validItems.isNotEmpty)
+          if (!_showIntro && !_showOutro && !_isTransiting && _showCard && _validItems.isNotEmpty)
             Positioned(
               bottom: bottomPadding + 100,
               left: 16,
@@ -570,24 +606,32 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
 
 /// すりガラス風の丸ボタン
 class _GlassButton extends StatelessWidget {
-  const _GlassButton({required this.icon, required this.onTap});
+  const _GlassButton({
+    required this.icon,
+    required this.onTap,
+    this.enabled = true,
+  });
 
   final IconData icon;
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.45),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+      onTap: enabled ? onTap : null,
+      child: Opacity(
+        opacity: enabled ? 1.0 : 0.35,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.45),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+          ),
+          child: Icon(icon, color: Colors.white, size: 20),
         ),
-        child: Icon(icon, color: Colors.white, size: 20),
       ),
     );
   }
@@ -625,8 +669,8 @@ class _ProgressDots extends StatelessWidget {
                   isActive
                       ? AppColors.accent
                       : isPast
-                      ? Colors.white.withValues(alpha: 0.6)
-                      : Colors.white.withValues(alpha: 0.25),
+                      ? Colors.white.withValues(alpha: 0.7)
+                      : Colors.white.withValues(alpha: 0.35),
             ),
           ),
         );
@@ -991,15 +1035,26 @@ class _AnimatedSpotCard extends StatelessWidget {
               ),
               const SizedBox(height: 10),
 
-              // スポット名
-              Text(
-                item.location,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  height: 1.2,
-                ),
+              // スポット名（タイプ絵文字付き）
+              Row(
+                children: [
+                  Text(
+                    _spotEmoji(item.location),
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      item.location,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                ],
               ),
 
               // ノート（あれば）
@@ -1008,7 +1063,7 @@ class _AnimatedSpotCard extends StatelessWidget {
                 Text(
                   item.notes!,
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.55),
+                    color: Colors.white.withValues(alpha: 0.7),
                     fontSize: 13,
                     height: 1.3,
                   ),
@@ -1064,9 +1119,9 @@ class _OutroOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final fade = CurvedAnimation(parent: controller, curve: Curves.easeOut);
 
-    return FadeTransition(
-      opacity: fade,
-      child: Positioned.fill(
+    return Positioned.fill(
+      child: FadeTransition(
+        opacity: fade,
         child: Container(
           color: Colors.black.withValues(alpha: 0.6),
           child: SafeArea(
@@ -1200,6 +1255,121 @@ class _OutroOverlay extends StatelessWidget {
   }
 }
 
+/// トランジットオーバーレイ（スポット間移動中）
+class _TransitOverlay extends StatelessWidget {
+  const _TransitOverlay({
+    required this.controller,
+    required this.emoji,
+    required this.toName,
+  });
+
+  final AnimationController controller;
+  final String emoji;
+  final String toName;
+
+  @override
+  Widget build(BuildContext context) {
+    // フェードイン（widget自体は _isTransiting=false で消えるのでフェードアウト不要）
+    final opacity = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.0, 0.3, curve: Curves.easeOut),
+    );
+
+    final bounce = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: controller,
+        curve: const Interval(0.0, 1.0, curve: Curves.linear),
+      ),
+    );
+
+    return Positioned.fill(
+      child: FadeTransition(
+        opacity: opacity,
+        child: Center(
+          child: AnimatedBuilder(
+            animation: bounce,
+            builder: (context, child) {
+              final yOffset = math.sin(bounce.value * math.pi * 3) * 8;
+              return Transform.translate(
+                offset: Offset(0, yOffset),
+                child: child,
+              );
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 乗り物絵文字（グロー付き）
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.15),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.accent.withValues(alpha: 0.3),
+                        blurRadius: 24,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Text(
+                      emoji,
+                      style: const TextStyle(fontSize: 36),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 行き先テキスト
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.arrow_forward_rounded,
+                        color: AppColors.accent,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          toName,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.85),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// コントロールバー
 class _ControlBar extends StatelessWidget {
   const _ControlBar({
@@ -1228,7 +1398,8 @@ class _ControlBar extends StatelessWidget {
         // 前へ
         _GlassButton(
           icon: Icons.skip_previous_rounded,
-          onTap: canSkipBack ? onSkipBack : () {},
+          onTap: onSkipBack,
+          enabled: canSkipBack,
         ),
         const SizedBox(width: 16),
 
@@ -1269,9 +1440,49 @@ class _ControlBar extends StatelessWidget {
         // 次へ
         _GlassButton(
           icon: Icons.skip_next_rounded,
-          onTap: canSkipForward ? onSkipForward : () {},
+          onTap: onSkipForward,
+          enabled: canSkipForward,
         ),
       ],
     );
   }
+}
+
+/// スポット名からタイプ絵文字を推定
+String _spotEmoji(String location) {
+  final l = location.toLowerCase();
+  if (RegExp(r'神社|寺|temple|shrine').hasMatch(l)) return '⛩️';
+  if (RegExp(r'城|castle').hasMatch(l)) return '🏯';
+  if (RegExp(r'公園|山|自然|garden|park|森|滝|湖').hasMatch(l)) return '🌲';
+  if (RegExp(r'海|ビーチ|beach|港').hasMatch(l)) return '🏖️';
+  if (RegExp(r'レストラン|カフェ|食|グルメ|cafe|restaurant|ラーメン|寿司|焼').hasMatch(l)) return '🍽️';
+  if (RegExp(r'ホテル|旅館|inn|hotel|宿').hasMatch(l)) return '🏨';
+  if (RegExp(r'駅|station').hasMatch(l)) return '🚉';
+  if (RegExp(r'空港|airport').hasMatch(l)) return '✈️';
+  if (RegExp(r'美術館|博物館|museum|水族館|動物園').hasMatch(l)) return '🏛️';
+  if (RegExp(r'温泉|spa|風呂').hasMatch(l)) return '♨️';
+  if (RegExp(r'買|ショッピング|モール|shop|market|商店').hasMatch(l)) return '🛍️';
+  return '📍';
+}
+
+/// 2点間のハーバーサイン距離（km）
+double _haversineDistance(PlanItem from, PlanItem to) {
+  const r = 6371.0; // 地球半径 km
+  final lat1 = from.latitude! * math.pi / 180;
+  final lat2 = to.latitude! * math.pi / 180;
+  final dLat = (to.latitude! - from.latitude!) * math.pi / 180;
+  final dLon = (to.longitude! - from.longitude!) * math.pi / 180;
+  final a =
+      math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) * math.sin(dLon / 2);
+  return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+}
+
+/// 距離に応じた移動手段絵文字
+String _transitEmoji(PlanItem from, PlanItem to) {
+  final dist = _haversineDistance(from, to);
+  if (dist < 1.0) return '🚶';
+  if (dist < 15.0) return '🚗';
+  if (dist < 100.0) return '🚃';
+  return '✈️';
 }

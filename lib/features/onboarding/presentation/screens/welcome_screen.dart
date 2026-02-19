@@ -160,10 +160,12 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
                   children: [
                     // 始めるボタン
                     ScaleTapFeedback(
-                      onTap: () {
+                      onTap: () async {
                         HapticFeedback.mediumImpact();
-                        ref.read(guestSessionProvider.notifier).startAsGuest();
-                        context.go('/profile-setup');
+                        await ref.read(guestSessionProvider.notifier).startAsGuest();
+                        if (context.mounted) {
+                          context.go('/profile-setup');
+                        }
                       },
                       child: Container(
                         width: double.infinity,

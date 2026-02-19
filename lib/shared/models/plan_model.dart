@@ -8,6 +8,7 @@ part 'plan_model.g.dart';
 @freezed
 class PlanItem with _$PlanItem {
   const factory PlanItem({
+    @Default('') String id,
     @Default(1) int day,
     required String time,
     required String location,
@@ -104,8 +105,7 @@ extension PlanModelExtension on PlanModel {
       'excludedCards': excludedCards,
       'votes': votes,
       'createdAt': Timestamp.fromDate(createdAt),
-      'updatedAt':
-          updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
+      'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
       'editingBy': editingBy,
       'lastEditedByName': lastEditedByName,
     };

@@ -32,6 +32,19 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkUserInfo();
+      _listenForTripStart();
+    });
+  }
+
+  /// ステータス変更を監視して、全メンバーを自動遷移させる
+  void _listenForTripStart() {
+    ref.listenManual(tripDetailProvider(widget.tripId), (previous, next) {
+      final trip = next.valueOrNull;
+      if (trip == null) return;
+      // ステータスがlobby以外に変わったら遷移
+      if (trip.status != TripStatus.lobby && mounted) {
+        context.go('/trip/${widget.tripId}');
+      }
     });
   }
 
@@ -50,7 +63,9 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
       }
     }
 
-    final result = await collectUserInfo(context, ref);
+    // メンバーとして登録されていない場合、名前と出発地を確認
+    // 旅ごとの設定を可能にするため、forceShow: true でダイアログを表示
+    final result = await collectUserInfo(context, ref, forceShow: true);
     if (result == null && mounted) {
       context.go('/');
       return;
@@ -83,9 +98,51 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
     );
   }
 
-  void _startPlanning() {
+  Future<void> _startPlanning() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            backgroundColor: AppColors.cardBackground,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusL),
+            ),
+            title: Text('カード集めを開始', style: AppTypography.titleMedium),
+            content: Text('メンバー全員が移動します', style: AppTypography.bodyMedium),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(
+                  'キャンセル',
+                  style: AppTypography.labelMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(
+                  '始める',
+                  style: AppTypography.labelMedium.copyWith(
+                    color: AppColors.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
     HapticFeedback.mediumImpact();
-    context.go('/trip/${widget.tripId}');
+    // Firestoreのステータスを更新 → 全メンバーが自動遷移
+    await ref
+        .read(tripControllerProvider.notifier)
+        .updateStatus(widget.tripId, TripStatus.collecting);
+    if (mounted) {
+      context.go('/trip/${widget.tripId}');
+    }
   }
 
   Future<void> _showAddMemberDialog() async {

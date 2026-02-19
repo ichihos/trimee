@@ -87,13 +87,13 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
         ref
             .read(guestSessionProvider.notifier)
             .setName(_existingMember!.displayName);
-        context.go('/trip/${widget.tripId}');
+        context.go('/trip/${widget.tripId}/lobby');
         return;
       }
 
-      // 通常の参加フロー
-      final hasName = await ensureUserHasName(context, ref);
-      if (!hasName) {
+      // 名前＋出発地点を収集
+      final userInfo = await collectUserInfo(context, ref, forceShow: true);
+      if (userInfo == null) {
         setState(() => _isJoining = false);
         return;
       }
@@ -103,7 +103,20 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
           .joinTrip(widget.tripId);
       if (mounted) {
         if (success) {
-          context.go('/trip/${widget.tripId}');
+          // メンバー詳細に出発地点を保存
+          final userId = ref.read(currentUserIdProvider);
+          if (userId != null) {
+            final member = TripMember(
+              userId: userId,
+              displayName: userInfo.name,
+              departurePoint: userInfo.departurePoint,
+              joinedAt: DateTime.now(),
+            );
+            await ref
+                .read(tripControllerProvider.notifier)
+                .updateMemberDetails(widget.tripId, userId, member);
+          }
+          context.go('/trip/${widget.tripId}/lobby');
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -338,12 +351,16 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
   }
 
   Future<void> _startAsGuest() async {
-    // ゲストセッション開始
-    ref.read(guestSessionProvider.notifier).startAsGuest();
+    // ゲストセッション開始（Firebase Anonymous Auth）
+    await ref.read(guestSessionProvider.notifier).startAsGuest();
+    if (!mounted) return;
 
-    // 名前入力ダイアログを表示
-    final name = await NameInputDialog.show(context);
-    if (name == null || name.isEmpty) {
+    // 名前＋出発地点入力ダイアログを表示
+    final result = await NameInputDialog.showWithDeparture(
+      context,
+      confirmLabel: '参加する',
+    );
+    if (result == null || result.name.isEmpty) {
       // キャンセルした場合はゲストセッションを終了
       ref.read(guestSessionProvider.notifier).endSession();
       return;

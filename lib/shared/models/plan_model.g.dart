@@ -8,6 +8,7 @@ part of 'plan_model.dart';
 
 _$PlanItemImpl _$$PlanItemImplFromJson(Map<String, dynamic> json) =>
     _$PlanItemImpl(
+      id: json['id'] as String? ?? '',
       day: (json['day'] as num?)?.toInt() ?? 1,
       time: json['time'] as String,
       location: json['location'] as String,
@@ -25,6 +26,7 @@ _$PlanItemImpl _$$PlanItemImplFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$$PlanItemImplToJson(_$PlanItemImpl instance) =>
     <String, dynamic>{
+      'id': instance.id,
       'day': instance.day,
       'time': instance.time,
       'location': instance.location,

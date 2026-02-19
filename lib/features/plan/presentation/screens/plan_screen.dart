@@ -11,7 +11,9 @@ import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/models/plan_model.dart';
+import '../../../../shared/models/trip_model.dart';
 
+import '../../../../shared/providers/firebase_providers.dart';
 import '../../../../shared/providers/user_profile_provider.dart';
 import '../../../../shared/services/ai_service.dart';
 import '../../../../shared/widgets/app_card.dart';
@@ -58,16 +60,27 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
 
   /// プランがない場合に自動でAI生成を開始
   Future<void> _autoGenerateIfNeeded() async {
-    // 既に生成状態がある場合は何もしない
+    // 既にプランがある場合は生成しない
+    final plans = ref.read(tripPlansProvider(widget.tripId)).valueOrNull;
+    if (plans != null && plans.isNotEmpty) return;
+
+    // 生成中の場合は何もしない
     final generationState = ref.read(planGenerationProvider(widget.tripId));
     if (generationState.isGenerating ||
         generationState.streamingPlans.isNotEmpty) {
       return;
     }
 
-    // プランを確認
-    final plans = await ref.read(tripPlansProvider(widget.tripId).future);
-    if (plans.isEmpty && mounted) {
+    // ホストのみが自動生成を実行できる
+    final trip = ref.read(tripDetailProvider(widget.tripId)).valueOrNull;
+    final currentUserId = ref.read(currentUserIdProvider);
+    final isHost = trip?.createdBy == currentUserId;
+
+    if (!isHost) return;
+
+    // 自動生成を開始
+    // 少し待ってから開始（画面遷移完了を待つ）
+    if (mounted) {
       _generatePlans();
     }
   }
@@ -103,6 +116,11 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
     final currentPlanTitle = generationState.currentPlanTitle;
     final generatingItems = generationState.generatingItems;
     final error = generationState.error;
+
+    // トリップ情報を取得して確定済みかチェック
+    final trip = ref.watch(tripDetailProvider(widget.tripId)).valueOrNull;
+    final isConfirmed =
+        trip?.status == TripStatus.confirmed && trip?.confirmedPlanId != null;
 
     // エラーがある場合
     if (error != null) {
@@ -179,9 +197,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
             _SlidingPlanTitle(plan: displayPlans[_currentPage])
           else if (showLoadingCard && _currentPage == streamingPlans.length)
             Container(
-              padding: const EdgeInsets.symmetric(
-                vertical: AppSizes.paddingS,
-              ),
+              padding: const EdgeInsets.symmetric(vertical: AppSizes.paddingS),
               child: Text(
                 '生成中...',
                 style: AppTypography.titleMedium.copyWith(
@@ -247,10 +263,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
                   tripId: widget.tripId,
                   isActive: index == _currentPage,
                   onSelectPlan:
-                      () => _selectAndEditPlan(
-                        context,
-                        displayPlans[index],
-                      ),
+                      () => _selectAndEditPlan(context, displayPlans[index]),
                   onRegenerate: _generatePlans,
                 );
               },
@@ -264,10 +277,30 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
 
     return plansAsync.when(
       data: (plans) {
+        // 確定済みプランがある場合は編集画面（詳細画面）を直接表示
+        if (isConfirmed) {
+          final confirmedPlan = plans.firstWhere(
+            (p) => p.id == trip!.confirmedPlanId,
+            orElse: () => plans.first,
+          );
+          return PlanEditScreen(
+            tripId: widget.tripId,
+            plan: confirmedPlan,
+            onBack: () => context.go('/trip/${widget.tripId}'),
+          );
+        }
+
         if (plans.isEmpty) {
           // 自動生成中の状態を表示
+          // ホスト以外の場合は「待機中」を表示
+          final currentUserId = ref.read(currentUserIdProvider);
+          final isHost = trip?.createdBy == currentUserId;
+          final isVoting = trip?.status == TripStatus.voting;
+
           return _EmptyPlanState(
             isGenerating: isGenerating,
+            isHost: isHost,
+            isTripVoting: isVoting,
             onGenerate: _generatePlans,
           );
         }
@@ -322,8 +355,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
                       child: _PlanOptionsCard(
                         onCreateEmpty: _createEmptyPlan,
                         onRegenerate: _generatePlans,
-                        onBackToSelection:
-                            () => Navigator.of(context).pop(),
+                        onBackToSelection: () => Navigator.of(context).pop(),
                       ),
                     );
                   }
@@ -790,7 +822,10 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
                             borderRadius: BorderRadius.circular(
                               AppSizes.radiusM,
                             ),
-                            child: PlanMapView(items: widget.plan.items, liteMode: true),
+                            child: PlanMapView(
+                              items: widget.plan.items,
+                              liteMode: true,
+                            ),
                           ),
                         )
                         : Builder(
@@ -2004,9 +2039,16 @@ class _InsightCardState extends State<_InsightCard>
 
 /// 空のプラン状態
 class _EmptyPlanState extends StatefulWidget {
-  const _EmptyPlanState({required this.isGenerating, required this.onGenerate});
+  const _EmptyPlanState({
+    required this.isGenerating,
+    required this.isHost,
+    this.isTripVoting = false,
+    required this.onGenerate,
+  });
 
   final bool isGenerating;
+  final bool isHost;
+  final bool isTripVoting;
   final VoidCallback onGenerate;
 
   @override
@@ -2033,7 +2075,7 @@ class _EmptyPlanStateState extends State<_EmptyPlanState> {
   @override
   void initState() {
     super.initState();
-    if (widget.isGenerating) {
+    if (widget.isGenerating || (!widget.isHost && widget.isTripVoting)) {
       _startMessageRotation();
     }
   }
@@ -2041,10 +2083,15 @@ class _EmptyPlanStateState extends State<_EmptyPlanState> {
   @override
   void didUpdateWidget(_EmptyPlanState oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isGenerating && !oldWidget.isGenerating) {
+    final effectiveGenerating =
+        widget.isGenerating || (!widget.isHost && widget.isTripVoting);
+    final oldEffectiveGenerating =
+        oldWidget.isGenerating || (!oldWidget.isHost && oldWidget.isTripVoting);
+
+    if (effectiveGenerating && !oldEffectiveGenerating) {
       _currentStep = 0;
       _startMessageRotation();
-    } else if (!widget.isGenerating && oldWidget.isGenerating) {
+    } else if (!effectiveGenerating && oldEffectiveGenerating) {
       _stopMessageRotation();
     }
   }
@@ -2073,13 +2120,18 @@ class _EmptyPlanStateState extends State<_EmptyPlanState> {
 
   @override
   Widget build(BuildContext context) {
+    // ホスト以外で、投票ステータスの場合は「生成中」として扱う
+    // (ホストが生成しているのを待っている状態)
+    final effectiveGenerating =
+        widget.isGenerating || (!widget.isHost && widget.isTripVoting);
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSizes.paddingXL),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (widget.isGenerating) ...[
+            if (effectiveGenerating) ...[
               // AI思考中のアイコン
               SpinAnimation(
                 duration: const Duration(milliseconds: 2000),
@@ -2146,8 +2198,8 @@ class _EmptyPlanStateState extends State<_EmptyPlanState> {
                   ),
                 ),
               ),
-            ] else ...[
-              // 非生成時
+            ] else if (widget.isHost) ...[
+              // ホスト用: 非生成時（生成ボタン）
               BounceIn(
                 child: Container(
                   width: 100,
@@ -2222,6 +2274,43 @@ class _EmptyPlanStateState extends State<_EmptyPlanState> {
                     ],
                   ),
                 ),
+              ),
+            ] else ...[
+              // ゲスト用: 非生成時（待機メッセージ）
+              BounceIn(
+                child: Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.hourglass_empty_rounded,
+                      size: 48,
+                      color: Colors.grey.shade400,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+
+              Text(
+                'プラン生成待ち',
+                style: AppTypography.titleMedium.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingS),
+
+              Text(
+                'ホストがプランを作成するのを\n待っています...',
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
               ),
             ],
           ],

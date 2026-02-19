@@ -74,6 +74,55 @@ class PlanRepository {
     await _plansCollection(tripId).doc(plan.id).update(data);
   }
 
+  /// プランのタイトルのみ更新
+  Future<void> updatePlanTitle({
+    required String tripId,
+    required String planId,
+    required String title,
+  }) async {
+    await _plansCollection(tripId).doc(planId).update({
+      'title': title,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// プランの説明のみ更新
+  Future<void> updatePlanDescription({
+    required String tripId,
+    required String planId,
+    required String description,
+  }) async {
+    await _plansCollection(tripId).doc(planId).update({
+      'description': description,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// プランのアイテムリストのみ更新
+  Future<void> updatePlanItems({
+    required String tripId,
+    required String planId,
+    required List<PlanItem> items,
+  }) async {
+    final itemsData = items.map((e) => e.toJson()).toList();
+    await _plansCollection(tripId).doc(planId).update({
+      'items': itemsData,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// プランのアイコンのみ更新
+  Future<void> updatePlanIcon({
+    required String tripId,
+    required String planId,
+    required String? iconUrl,
+  }) async {
+    await _plansCollection(tripId).doc(planId).update({
+      'iconUrl': iconUrl,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   /// 単一プランをリアルタイム監視
   Stream<PlanModel?> watchPlan(String tripId, String planId) {
     return _plansCollection(tripId).doc(planId).snapshots().map((doc) {

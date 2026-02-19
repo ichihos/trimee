@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/foundation.dart' show Factory, kIsWeb;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -19,18 +18,18 @@ class PlanMapView extends StatefulWidget {
     this.onItemTap,
     this.onCardTap,
     this.startDate,
-    this.focusIndex,
+    this.focusItemId,
     this.liteMode = false,
     super.key,
   });
 
   final List<PlanItem> items;
-  final void Function(int index)? onItemTap;
-  final void Function(int index)? onCardTap;
+  final void Function(String itemId)? onItemTap;
+  final void Function(String itemId)? onCardTap;
   final DateTime? startDate;
 
-  /// 外部から指定されたフォーカスインデックス
-  final int? focusIndex;
+  /// 外部から指定されたフォーカスアイテムID
+  final String? focusItemId;
 
   /// 軽量モード（静的ビットマップとして表示）
   final bool liteMode;
@@ -43,16 +42,15 @@ class _PlanMapViewState extends State<PlanMapView> {
   GoogleMapController? _mapController;
   Set<Marker> _markers = {};
   Set<Polyline> _polylines = {};
-  int? _selectedIndex;
+  String? _selectedItemId;
   int? _filterDay; // null = 全日程表示
-  final Map<int, BitmapDescriptor> _markerIcons = {};
+  static final Map<int, BitmapDescriptor> _markerIcons = {};
   final ScrollController _seekBarScrollController = ScrollController();
   bool _isFocusing = false; // _focusOnItem中はfitBoundsを抑制
-
   @override
   void initState() {
     super.initState();
-    _selectedIndex = widget.focusIndex;
+    _selectedItemId = widget.focusItemId;
     _buildMarkersAndPolylines();
   }
 
@@ -65,26 +63,43 @@ class _PlanMapViewState extends State<PlanMapView> {
   @override
   void didUpdateWidget(PlanMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.items != widget.items) {
+    // アイテムが実際に変わった場合のみ再構築
+    if (!_itemsEqual(oldWidget.items, widget.items)) {
       _buildMarkersAndPolylines();
       _fitBounds();
     }
     // 外部からのフォーカス変更
-    if (widget.focusIndex != null &&
-        widget.focusIndex != oldWidget.focusIndex) {
-      _focusOnItem(widget.focusIndex!);
+    if (widget.focusItemId != null &&
+        widget.focusItemId != oldWidget.focusItemId) {
+      _focusOnItem(widget.focusItemId!);
     }
   }
 
-  /// 指定インデックスのスポットにフォーカス
-  void _focusOnItem(int index) {
-    if (index < 0 || index >= widget.items.length) return;
+  bool _itemsEqual(List<PlanItem> a, List<PlanItem> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].latitude != b[i].latitude ||
+          a[i].longitude != b[i].longitude ||
+          a[i].day != b[i].day) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 指定IDのスポットにフォーカス
+  void _focusOnItem(String itemId) {
+    final index = widget.items.indexWhere((e) => e.id == itemId);
+    if (index < 0) return;
+
     final item = widget.items[index];
     if (item.latitude == null || item.longitude == null) return;
 
     // フォーカス中はfitBoundsを抑制
     _isFocusing = true;
-    setState(() => _selectedIndex = index);
+    setState(() => _selectedItemId = itemId);
     _mapController?.animateCamera(
       CameraUpdate.newLatLngZoom(LatLng(item.latitude!, item.longitude!), 15),
     );
@@ -112,15 +127,6 @@ class _PlanMapViewState extends State<PlanMapView> {
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
-  }
-
-  Future<BitmapDescriptor> _getMarkerIcon(int day) async {
-    if (_markerIcons.containsKey(day)) {
-      return _markerIcons[day]!;
-    }
-    final icon = await _createColoredMarker(_getDayColor(day), day);
-    _markerIcons[day] = icon;
-    return icon;
   }
 
   static Future<BitmapDescriptor> _createColoredMarker(
@@ -175,40 +181,6 @@ class _PlanMapViewState extends State<PlanMapView> {
     return BitmapDescriptor.bytes(byteData.buffer.asUint8List());
   }
 
-  /// 2点間に矢印用の中間ポイントを生成
-  List<LatLng> _createArrowPoints(LatLng from, LatLng to) {
-    final midLat = (from.latitude + to.latitude) / 2;
-    final midLng = (from.longitude + to.longitude) / 2;
-
-    final angle = math.atan2(
-      to.latitude - from.latitude,
-      to.longitude - from.longitude,
-    );
-
-    // 矢印の大きさ（緯度・経度の差で調整）
-    final dist = math.sqrt(
-      math.pow(to.latitude - from.latitude, 2) +
-          math.pow(to.longitude - from.longitude, 2),
-    );
-    final arrowSize = dist * 0.22;
-
-    // 矢印の2辺
-    final leftAngle = angle + math.pi * 0.75;
-    final rightAngle = angle - math.pi * 0.75;
-
-    return [
-      LatLng(
-        midLat + arrowSize * math.sin(leftAngle),
-        midLng + arrowSize * math.cos(leftAngle),
-      ),
-      LatLng(midLat, midLng),
-      LatLng(
-        midLat + arrowSize * math.sin(rightAngle),
-        midLng + arrowSize * math.cos(rightAngle),
-      ),
-    ];
-  }
-
   Future<void> _buildMarkersAndPolylines() async {
     final markers = <Marker>{};
     final polylines = <Polyline>{};
@@ -230,17 +202,30 @@ class _PlanMapViewState extends State<PlanMapView> {
             )
             .toList();
 
+    // 必要な日程のマーカーアイコンを一括で事前生成
+    final neededDays = itemsWithCoords.map((e) => e.value.day).toSet();
+    final missingDays = neededDays.where((d) => !_markerIcons.containsKey(d));
+    if (missingDays.isNotEmpty) {
+      final futures = missingDays.map(
+        (d) => _createColoredMarker(_getDayColor(d), d).then((icon) => MapEntry(d, icon)),
+      );
+      final results = await Future.wait(futures);
+      for (final entry in results) {
+        _markerIcons[entry.key] = entry.value;
+      }
+    }
+
     for (final entry in itemsWithCoords) {
       final item = entry.value;
-      // 元のリストでのインデックスを取得
       final originalIndex = widget.items.indexOf(item);
       final position = LatLng(item.latitude!, item.longitude!);
-
-      final icon = await _getMarkerIcon(item.day);
+      final icon = _markerIcons[item.day] ?? BitmapDescriptor.defaultMarker;
 
       markers.add(
         Marker(
-          markerId: MarkerId('item_$originalIndex'),
+          markerId: MarkerId(
+            'item_${item.id.isNotEmpty ? item.id : "idx_$originalIndex"}',
+          ),
           position: position,
           icon: icon,
           infoWindow: InfoWindow(
@@ -248,14 +233,16 @@ class _PlanMapViewState extends State<PlanMapView> {
             snippet: '${item.time} (${item.durationMinutes}分)',
           ),
           onTap: () {
-            setState(() => _selectedIndex = originalIndex);
-            widget.onItemTap?.call(originalIndex);
+            setState(() => _selectedItemId = item.id);
+            if (item.id.isNotEmpty) {
+              widget.onItemTap?.call(item.id);
+            }
           },
         ),
       );
     }
 
-    // 日程ごとにルート線を作成
+    // 日程ごとにルート線を作成（矢印なし・軽量化）
     final dayGroups = <int, List<LatLng>>{};
     for (final entry in itemsWithCoords) {
       final item = entry.value;
@@ -269,7 +256,6 @@ class _PlanMapViewState extends State<PlanMapView> {
       final color = _getDayColor(day);
 
       if (points.length > 1) {
-        // メインルート線
         polylines.add(
           Polyline(
             polylineId: PolylineId('route_$day'),
@@ -279,19 +265,6 @@ class _PlanMapViewState extends State<PlanMapView> {
             patterns: [PatternItem.dash(20), PatternItem.gap(8)],
           ),
         );
-
-        // 区間ごとに矢印を追加
-        for (var i = 0; i < points.length - 1; i++) {
-          final arrowPoints = _createArrowPoints(points[i], points[i + 1]);
-          polylines.add(
-            Polyline(
-              polylineId: PolylineId('arrow_${day}_$i'),
-              points: arrowPoints,
-              color: color,
-              width: 5,
-            ),
-          );
-        }
       }
     }
 
@@ -306,7 +279,7 @@ class _PlanMapViewState extends State<PlanMapView> {
   void _setFilterDay(int? day) {
     setState(() {
       _filterDay = day;
-      _selectedIndex = null;
+      _selectedItemId = null;
     });
     _buildMarkersAndPolylines().then((_) {
       Future.delayed(const Duration(milliseconds: 100), _fitBounds);
@@ -378,19 +351,22 @@ class _PlanMapViewState extends State<PlanMapView> {
             _mapController = controller;
             Future.delayed(const Duration(milliseconds: 300), () {
               _fitBounds();
-              // focusIndex が指定されていれば初期フォーカス
-              if (widget.focusIndex != null) {
+              if (widget.focusItemId != null) {
                 Future.delayed(
                   const Duration(milliseconds: 500),
-                  () => _focusOnItem(widget.focusIndex!),
+                  () => _focusOnItem(widget.focusItemId!),
                 );
               }
             });
           },
+          // ジェスチャーを地図が優先的に受け取る（親ScrollViewとの競合防止）
+          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+            Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+          },
           mapToolbarEnabled: false,
           zoomControlsEnabled: false,
           myLocationButtonEnabled: false,
-          onTap: (_) => setState(() => _selectedIndex = null),
+          onTap: (_) => setState(() => _selectedItemId = null),
         ),
 
         if (!widget.liteMode) ...[
@@ -411,13 +387,15 @@ class _PlanMapViewState extends State<PlanMapView> {
                 _ZoomButton(
                   icon: Icons.add,
                   onTap:
-                      () => _mapController?.animateCamera(CameraUpdate.zoomIn()),
+                      () =>
+                          _mapController?.animateCamera(CameraUpdate.zoomIn()),
                 ),
                 const SizedBox(height: AppSizes.paddingXS),
                 _ZoomButton(
                   icon: Icons.remove,
                   onTap:
-                      () => _mapController?.animateCamera(CameraUpdate.zoomOut()),
+                      () =>
+                          _mapController?.animateCamera(CameraUpdate.zoomOut()),
                 ),
                 const SizedBox(height: AppSizes.paddingM),
                 _ZoomButton(icon: Icons.fit_screen, onTap: _fitBounds),
@@ -549,129 +527,135 @@ class _PlanMapViewState extends State<PlanMapView> {
       child: SizedBox(
         height: 72,
         child: ScrollConfiguration(
-          behavior: kIsWeb
-              ? ScrollConfiguration.of(context).copyWith(
-                  dragDevices: {
-                    PointerDeviceKind.touch,
-                    PointerDeviceKind.mouse,
-                    PointerDeviceKind.trackpad,
-                  },
-                  overscroll: false,
-                )
-              : ScrollConfiguration.of(context),
+          behavior:
+              kIsWeb
+                  ? ScrollConfiguration.of(context).copyWith(
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.trackpad,
+                    },
+                    overscroll: false,
+                  )
+                  : ScrollConfiguration.of(context),
           child: ListView.builder(
-          controller: _seekBarScrollController,
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingS),
-          itemCount: itemsWithCoords.length,
-          itemBuilder: (context, i) {
-            final entry = itemsWithCoords[i];
-            final originalIndex = entry.key;
-            final item = entry.value;
-            final isSelected = _selectedIndex == originalIndex;
-            final dayColor = _getDayColor(item.day);
+            controller: _seekBarScrollController,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingS),
+            itemCount: itemsWithCoords.length,
+            itemBuilder: (context, i) {
+              final entry = itemsWithCoords[i];
+              final item = entry.value;
+              final isSelected = _selectedItemId == item.id;
+              final dayColor = _getDayColor(item.day);
 
-            return GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                _focusOnItem(originalIndex);
-                widget.onItemTap?.call(originalIndex);
-              },
-              onLongPress: () {
-                HapticFeedback.mediumImpact();
-                widget.onCardTap?.call(originalIndex);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 128,
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSizes.paddingS,
-                  vertical: AppSizes.paddingXS,
-                ),
-                decoration: BoxDecoration(
-                  color:
-                      isSelected
-                          ? dayColor.withValues(alpha: 0.95)
-                          : AppColors.cardBackground.withValues(alpha: 0.92),
-                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                  border: Border.all(
-                    color:
-                        isSelected ? dayColor : dayColor.withValues(alpha: 0.3),
-                    width: isSelected ? 2 : 1,
+              return GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  _focusOnItem(item.id);
+                  if (item.id.isNotEmpty) {
+                    widget.onItemTap?.call(item.id);
+                  }
+                },
+                onLongPress: () {
+                  HapticFeedback.mediumImpact();
+                  if (item.id.isNotEmpty) {
+                    widget.onCardTap?.call(item.id);
+                  }
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 128,
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSizes.paddingS,
+                    vertical: AppSizes.paddingXS,
                   ),
-                  boxShadow:
-                      isSelected
-                          ? [
-                            BoxShadow(
-                              color: dayColor.withValues(alpha: 0.4),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
+                  decoration: BoxDecoration(
+                    color:
+                        isSelected
+                            ? dayColor.withValues(alpha: 0.95)
+                            : AppColors.cardBackground.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                    border: Border.all(
+                      color:
+                          isSelected
+                              ? dayColor
+                              : dayColor.withValues(alpha: 0.3),
+                      width: isSelected ? 2 : 1,
+                    ),
+                    boxShadow:
+                        isSelected
+                            ? [
+                              BoxShadow(
+                                color: dayColor.withValues(alpha: 0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                            : null,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // 時刻 + 日程バッジ
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 1,
                             ),
-                          ]
-                          : null,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // 時刻 + 日程バッジ
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 1,
+                            decoration: BoxDecoration(
+                              color:
+                                  isSelected
+                                      ? Colors.white.withValues(alpha: 0.3)
+                                      : dayColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${item.day}日目',
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                                color: isSelected ? Colors.white : dayColor,
+                              ),
+                            ),
                           ),
-                          decoration: BoxDecoration(
-                            color:
-                                isSelected
-                                    ? Colors.white.withValues(alpha: 0.3)
-                                    : dayColor.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            '${item.day}日目',
+                          const SizedBox(width: 4),
+                          Text(
+                            item.time,
                             style: TextStyle(
-                              fontSize: 9,
+                              fontSize: 10,
                               fontWeight: FontWeight.w600,
-                              color: isSelected ? Colors.white : dayColor,
+                              color:
+                                  isSelected
+                                      ? Colors.white.withValues(alpha: 0.9)
+                                      : AppColors.textSecondary,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          item.time,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color:
-                                isSelected
-                                    ? Colors.white.withValues(alpha: 0.9)
-                                    : AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    // スポット名
-                    Text(
-                      item.location,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color:
-                            isSelected ? Colors.white : AppColors.textPrimary,
+                        ],
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                      const SizedBox(height: 3),
+                      // スポット名
+                      Text(
+                        item.location,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color:
+                              isSelected ? Colors.white : AppColors.textPrimary,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
-        ),
+              );
+            },
+          ),
         ),
       ),
     );

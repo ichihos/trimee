@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'firebase_options.dart';
+import 'shared/providers/guest_session_provider.dart';
 import 'shared/providers/theme_provider.dart';
 
 void main() async {
@@ -22,10 +23,14 @@ void main() async {
   // SharedPreferences初期化
   final prefs = await SharedPreferences.getInstance();
 
+  final container = ProviderContainer(
+    overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+  );
+
+  // ゲストセッション復元（Webリロード対策）
+  container.read(guestSessionProvider.notifier).restoreSession(prefs);
+
   runApp(
-    ProviderScope(
-      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
-      child: const TrimeeApp(),
-    ),
+    UncontrolledProviderScope(container: container, child: const TrimeeApp()),
   );
 }

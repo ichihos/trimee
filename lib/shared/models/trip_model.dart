@@ -7,6 +7,9 @@ part 'trip_model.g.dart';
 
 /// 旅行のステータス
 enum TripStatus {
+  /// メンバー待機中（ロビー）
+  lobby,
+
   /// カード集め中
   collecting,
 

@@ -8,8 +8,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/models/expense_model.dart';
@@ -19,26 +21,36 @@ import '../../../../shared/providers/user_profile_provider.dart';
 import '../../../../shared/services/ai_service.dart';
 import '../../../../shared/widgets/app_card.dart';
 import '../../../../shared/widgets/app_icon.dart';
+import 'package:uuid/uuid.dart';
 import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../trip/presentation/providers/trip_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/plan_provider.dart';
 import '../widgets/plan_map_view.dart';
+import '../../../../shared/services/plan_export_service.dart';
 import '../widgets/placeholder_action_sheet.dart';
 
 /// プラン編集画面
 class PlanEditScreen extends ConsumerStatefulWidget {
-  const PlanEditScreen({super.key, required this.tripId, required this.plan});
+  const PlanEditScreen({
+    super.key,
+    required this.tripId,
+    required this.plan,
+    this.onBack,
+  });
 
   final String tripId;
   final PlanModel plan;
+  final VoidCallback? onBack;
 
   @override
   ConsumerState<PlanEditScreen> createState() => _PlanEditScreenState();
 }
 
 class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
-  int? _selectedMapIndex;
+  String? _selectedItemId;
+  final _uuid = const Uuid();
+  final GlobalKey _exportKey = GlobalKey();
 
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
@@ -48,7 +60,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   bool _showSaveIndicator = false;
   Timer? _debounceTimer;
   bool _isMapView = false;
-  final Map<int, GlobalKey> _itemKeys = {};
+  final Map<String, GlobalKey> _itemKeys = {};
   final ScrollController _mainScrollController = ScrollController();
 
   // リアルタイム同期用
@@ -56,6 +68,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   String? _otherEditorName;
   DateTime? _lastSaveTime;
   bool _ignoreNextStreamUpdate = false;
+  bool _isDragging = false; // ドラッグ中かどうか
 
   @override
   void initState() {
@@ -72,13 +85,13 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setPresence(active: true);
       _listenToExternalChanges();
+      // ゲストの場合はログインシートを自動表示
+      _showGuestLoginSheetIfNeeded();
     });
   }
 
-  void _triggerAutoSave() {
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 500), _autoSave);
-  }
+  // _triggerAutoSave は削除し、個別の更新メソッドを使用する
+  // void _triggerAutoSave() { ... }
 
   @override
   void dispose() {
@@ -159,8 +172,36 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         if (plan.updatedAt != null &&
             _lastSaveTime != null &&
             plan.updatedAt!.isAfter(_lastSaveTime!)) {
-          if (mounted) {
-            setState(() => _hasExternalUpdate = true);
+          // 部分更新を反映
+          bool updated = false;
+
+          // タイトル
+          if (plan.title != _titleController.text) {
+            _titleController.text = plan.title;
+            updated = true;
+          }
+          // 説明
+          if (plan.description != _descriptionController.text) {
+            _descriptionController.text = plan.description ?? '';
+            updated = true;
+          }
+          // アイテム (ドラッグ中以外)
+          if (!_isDragging && plan.items.length != _items.length) {
+            _items = List.from(plan.items);
+            updated = true;
+          } else if (!_isDragging) {
+            // 内容の比較（簡易的）
+            // deep copy or proper diff is better, but this suffices for now
+            _items = List.from(plan.items); // Force update to be safe
+            updated = true;
+          }
+
+          if (updated && mounted) {
+            setState(() {
+              _lastSaveTime = plan.updatedAt;
+              // アイコンなども必要なら更新
+              _iconUrl = plan.iconUrl;
+            });
           }
         }
       },
@@ -196,8 +237,65 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     );
   }
 
-  Future<void> _autoSave() async {
-    if (_isSaving) return;
+  /// タイトルを更新
+  Future<void> _updateTitle(String newTitle) async {
+    if (widget.plan.title == newTitle) return;
+
+    _ignoreNextStreamUpdate = true;
+    try {
+      await ref
+          .read(planControllerProvider.notifier)
+          .updatePlanTitle(
+            tripId: widget.tripId,
+            planId: widget.plan.id,
+            title: newTitle,
+          );
+      _lastSaveTime = DateTime.now();
+    } catch (e) {
+      _ignoreNextStreamUpdate = false;
+      // エラー処理
+    }
+  }
+
+  /// アイコンを更新
+  Future<void> _updateIcon(String? newIconUrl) async {
+    _ignoreNextStreamUpdate = true;
+    try {
+      await ref
+          .read(planControllerProvider.notifier)
+          .updatePlanIcon(
+            tripId: widget.tripId,
+            planId: widget.plan.id,
+            iconUrl: newIconUrl,
+          );
+      _lastSaveTime = DateTime.now();
+    } catch (e) {
+      _ignoreNextStreamUpdate = false;
+    }
+  }
+
+  /// 説明を更新
+  Future<void> _updateDescription(String newDescription) async {
+    if (widget.plan.description == newDescription) return;
+
+    _ignoreNextStreamUpdate = true;
+    try {
+      await ref
+          .read(planControllerProvider.notifier)
+          .updatePlanDescription(
+            tripId: widget.tripId,
+            planId: widget.plan.id,
+            description: newDescription,
+          );
+      _lastSaveTime = DateTime.now();
+    } catch (e) {
+      _ignoreNextStreamUpdate = false;
+    }
+  }
+
+  /// アイテムリストを更新
+  Future<void> _updateItems(List<PlanItem> newItems) async {
+    if (_isSaving) return; // 重複防止（必要に応じて）
 
     setState(() {
       _isSaving = true;
@@ -206,18 +304,14 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
 
     _ignoreNextStreamUpdate = true;
 
-    final updatedPlan = widget.plan.copyWith(
-      title: _titleController.text,
-      description: _descriptionController.text,
-      iconUrl: _iconUrl,
-      items: _items,
-      updatedAt: DateTime.now(),
-    );
-
     try {
       await ref
           .read(planControllerProvider.notifier)
-          .updatePlan(tripId: widget.tripId, plan: updatedPlan);
+          .updatePlanItems(
+            tripId: widget.tripId,
+            planId: widget.plan.id,
+            items: newItems,
+          );
       _lastSaveTime = DateTime.now();
     } catch (e) {
       _ignoreNextStreamUpdate = false;
@@ -285,7 +379,8 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                     _titleController.text = titleController.text;
                     _descriptionController.text = descController.text;
                   });
-                  _triggerAutoSave();
+                  _updateTitle(titleController.text);
+                  _updateDescription(descController.text);
                   Navigator.pop(context);
                 },
                 child: const Text('保存'),
@@ -295,8 +390,10 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     );
   }
 
-  void _scrollToItem(int index) {
-    final key = _itemKeys[index];
+  void _scrollToItem(String itemId) {
+    if (!_itemKeys.containsKey(itemId)) return;
+
+    final key = _itemKeys[itemId];
     if (key?.currentContext != null) {
       Scrollable.ensureVisible(
         key!.currentContext!,
@@ -311,10 +408,14 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     _showEditItemSheet(
       item: null,
       onSave: (newItem) {
+        // IDがなければ生成
+        final itemToAdd =
+            newItem.id.isEmpty ? newItem.copyWith(id: _uuid.v4()) : newItem;
+
         setState(() {
-          _items.add(newItem);
+          _items.add(itemToAdd);
         });
-        _triggerAutoSave();
+        _updateItems(_items);
       },
     );
   }
@@ -326,15 +427,22 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         setState(() {
           _items[index] = updatedItem;
         });
-        _triggerAutoSave();
+        _updateItems(_items);
       },
       onDelete: () {
         setState(() {
           _items.removeAt(index);
         });
-        _triggerAutoSave();
+        _updateItems(_items);
       },
     );
+  }
+
+  void _editItemById(String itemId) {
+    final index = _items.indexWhere((e) => e.id == itemId);
+    if (index >= 0) {
+      _editItem(index);
+    }
   }
 
   void _showEditItemSheet({
@@ -404,10 +512,15 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                         item: null,
                         defaultDay: day,
                         onSave: (newItem) {
+                          // ID生成
+                          final itemToAdd =
+                              newItem.id.isEmpty
+                                  ? newItem.copyWith(id: _uuid.v4())
+                                  : newItem;
                           setState(() {
-                            _items.insert(insertAtIndex, newItem);
+                            _items.insert(insertAtIndex, itemToAdd);
                           });
-                          _triggerAutoSave();
+                          _updateItems(_items);
                         },
                       );
                     },
@@ -454,7 +567,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                   _items.insert(insertAtIndex + i, newItems[i]);
                 }
               });
-              _triggerAutoSave();
+              _updateItems(_items);
             },
           ),
     );
@@ -489,11 +602,9 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       }
     }
 
-    // Clear and repopulate _itemKeys
-    _itemKeys.clear();
-    for (var i = 0; i < _items.length; i++) {
-      _itemKeys[i] = GlobalKey();
-    }
+    // _itemKeys maintenance: remove unused keys
+    final currentIds = _items.map((e) => e.id).toSet();
+    _itemKeys.removeWhere((id, _) => !currentIds.contains(id));
 
     return ReorderableListView.builder(
       buildDefaultDragHandles: false, // カスタムハンドルを使用
@@ -517,6 +628,8 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
           ),
         );
       },
+      onReorderStart: (_) => _isDragging = true,
+      onReorderEnd: (_) => _isDragging = false,
       onReorder: (oldIndex, newIndex) {
         // ヘッダー・挿入ボタンは並び替え対象外
         final oldItem = flatList[oldIndex];
@@ -549,7 +662,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
           final item = _items.removeAt(actualOldIndex);
           _items.insert(actualNewIndex, item);
         });
-        _triggerAutoSave();
+        _updateItems(_items);
       },
       itemBuilder: (context, index) {
         final groupItem = flatList[index];
@@ -580,10 +693,14 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         final isFirstInDay = indexInDay == 0;
         final isLastInDay = indexInDay == dayItems.length - 1;
 
+        // IDベースの安定したキーを使用
+        final itemKey = _itemKeys.putIfAbsent(item.id, () => GlobalKey());
+
         return _TimelineEditItem(
-          key: _itemKeys[itemIndex],
+          key: itemKey,
           item: item,
           index: itemIndex,
+          reorderIndex: index,
           isFirst: isFirstInDay,
           isLast: isLastInDay,
           showDayBadge: !isMultiDay,
@@ -595,28 +712,25 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
             setState(() {
               _items.removeAt(itemIndex);
             });
-            _triggerAutoSave();
+            _updateItems(_items);
           },
-          onMapJump:
-              (item.latitude != null && item.longitude != null)
-                  ? () {
-                    HapticFeedback.lightImpact();
-                    setState(() {
-                      _selectedMapIndex = itemIndex;
-                      _isMapView = true;
-                    });
-                    // 地図が見えるようにスクロールをトップへ
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (_mainScrollController.hasClients) {
-                        _mainScrollController.animateTo(
-                          0,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeOut,
-                        );
-                      }
-                    });
-                  }
-                  : null,
+          onMapJump: () {
+            HapticFeedback.lightImpact();
+            setState(() {
+              _selectedItemId = item.id;
+              _isMapView = true;
+            });
+            // 地図が見えるようにスクロールをトップへ
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_mainScrollController.hasClients) {
+                _mainScrollController.animateTo(
+                  0,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                );
+              }
+            });
+          },
           onUpdateLocation: (name, lat, lng) {
             HapticFeedback.mediumImpact();
             setState(() {
@@ -627,7 +741,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                 isPlaceholder: false,
               );
             });
-            _triggerAutoSave();
+            _updateItems(_items);
           },
         );
       },
@@ -694,7 +808,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
               setState(() {
                 _items = newItems;
               });
-              _triggerAutoSave();
+              _updateItems(_items);
             },
           ),
     );
@@ -800,6 +914,187 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     );
   }
 
+  void _showGuestLoginSheetIfNeeded() {
+    final isAuthenticated = ref.read(isAuthenticatedProvider);
+    final currentUserId = ref.read(currentUserIdProvider);
+    if (!isAuthenticated && currentUserId != null) {
+      _showGuestLoginSheet(context);
+    }
+  }
+
+  void _showGuestLoginSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder:
+          (_) => _GuestLoginSheet(
+            onSuccess: () {
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('アカウント登録が完了しました！データはそのまま引き継がれます'),
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
+    );
+  }
+
+  void _showExportSheet() {
+    HapticFeedback.lightImpact();
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder:
+          (context) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSizes.paddingL),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'プランをエクスポート',
+                    style: AppTypography.titleMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppSizes.paddingL),
+                  _ExportOption(
+                    icon: Icons.image_outlined,
+                    label: '画像として保存',
+                    subtitle: '現在の画面をPNG画像としてキャプチャ',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _exportAsImage();
+                    },
+                  ),
+                  const SizedBox(height: AppSizes.paddingS),
+                  _ExportOption(
+                    icon: Icons.picture_as_pdf_outlined,
+                    label: 'PDFとして保存',
+                    subtitle: 'タイムライン形式のPDFを生成',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _exportAsPdf();
+                    },
+                  ),
+                  const SizedBox(height: AppSizes.paddingS),
+                  _ExportOption(
+                    icon: Icons.text_snippet_outlined,
+                    label: 'テキストで共有',
+                    subtitle: 'プラン内容をテキスト形式で共有',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _shareAsText();
+                    },
+                  ),
+                  const SizedBox(height: AppSizes.paddingM),
+                ],
+              ),
+            ),
+          ),
+    );
+  }
+
+  Rect _getShareOrigin() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return Rect.zero;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  Future<void> _exportAsImage() async {
+    try {
+      final path = await PlanExportService.exportAsImage(_exportKey);
+      if (mounted) {
+        await Share.shareXFiles(
+          [XFile(path)],
+          subject: _titleController.text,
+          sharePositionOrigin: _getShareOrigin(),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('画像エクスポートエラー: $e')));
+      }
+    }
+  }
+
+  Future<void> _exportAsPdf() async {
+    try {
+      final tripAsync = await ref.read(
+        tripDetailProvider(widget.tripId).future,
+      );
+      final path = await PlanExportService.exportAsPdf(
+        plan: widget.plan.copyWith(
+          title: _titleController.text,
+          description: _descriptionController.text,
+          items: _items,
+        ),
+        tripTitle: tripAsync?.title ?? '',
+        startDate: tripAsync?.startDate,
+      );
+      if (mounted) {
+        await Share.shareXFiles(
+          [XFile(path)],
+          subject: _titleController.text,
+          sharePositionOrigin: _getShareOrigin(),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('PDFエクスポートエラー: $e')));
+      }
+    }
+  }
+
+  void _shareAsText() {
+    final buf = StringBuffer();
+    buf.writeln(_titleController.text);
+    if (_descriptionController.text.isNotEmpty) {
+      buf.writeln(_descriptionController.text);
+    }
+    buf.writeln();
+
+    final itemsByDay = <int, List<PlanItem>>{};
+    for (final item in _items) {
+      itemsByDay.putIfAbsent(item.day, () => []).add(item);
+    }
+    final days = itemsByDay.keys.toList()..sort();
+
+    for (final day in days) {
+      buf.writeln('--- $day日目 ---');
+      final items = itemsByDay[day]!..sort((a, b) => a.time.compareTo(b.time));
+      for (final item in items) {
+        buf.writeln('${item.time}  ${item.location}（${item.durationMinutes}分）');
+        if (item.notes != null && item.notes!.isNotEmpty) {
+          buf.writeln('  ${item.notes}');
+        }
+      }
+      buf.writeln();
+    }
+
+    buf.writeln('trimeeで作成');
+    Share.share(buf.toString(), sharePositionOrigin: _getShareOrigin());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -870,213 +1165,224 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         ),
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // ヘッダー
-            _EditHeader(
-              onBack: () => Navigator.pop(context),
-              isSaving: _isSaving,
-              showSaveIndicator: _showSaveIndicator,
-              onPlayAnimation: _showTravelAnimation,
-            ),
-
-            // 他のユーザーが編集中バナー
-            if (_otherEditorName != null)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSizes.paddingM,
-                  vertical: AppSizes.paddingS,
-                ),
-                color: Colors.amber.shade50,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.person_outline,
-                      size: 16,
-                      color: Colors.amber.shade800,
-                    ),
-                    const SizedBox(width: AppSizes.paddingXS),
-                    Expanded(
-                      child: Text(
-                        '$_otherEditorNameも編集中です',
-                        style: AppTypography.caption.copyWith(
-                          color: Colors.amber.shade900,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+        child: RepaintBoundary(
+          key: _exportKey,
+          child: Column(
+            children: [
+              // ヘッダー
+              _EditHeader(
+                onBack: widget.onBack ?? () => Navigator.pop(context),
+                isSaving: _isSaving,
+                showSaveIndicator: _showSaveIndicator,
+                onPlayAnimation: _showTravelAnimation,
+                onExport: _showExportSheet,
               ),
 
-            // 外部変更通知バナー
-            if (_hasExternalUpdate)
-              GestureDetector(
-                onTap: _applyExternalUpdate,
-                child: Container(
+              // 他のユーザーが編集中バナー
+              if (_otherEditorName != null)
+                Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSizes.paddingM,
                     vertical: AppSizes.paddingS,
                   ),
-                  color: AppColors.accent.withValues(alpha: 0.1),
+                  color: Colors.amber.shade50,
                   child: Row(
                     children: [
-                      Icon(Icons.sync, size: 16, color: AppColors.accent),
+                      Icon(
+                        Icons.person_outline,
+                        size: 16,
+                        color: Colors.amber.shade800,
+                      ),
                       const SizedBox(width: AppSizes.paddingXS),
                       Expanded(
                         child: Text(
-                          '他のメンバーが変更しました',
+                          '$_otherEditorNameも編集中です',
                           style: AppTypography.caption.copyWith(
-                            color: AppColors.accent,
+                            color: Colors.amber.shade900,
                             fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSizes.paddingS,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.accent,
-                          borderRadius: BorderRadius.circular(
-                            AppSizes.radiusFull,
-                          ),
-                        ),
-                        child: Text(
-                          '反映する',
-                          style: AppTypography.caption.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
 
-            // メインコンテンツ
-            Expanded(
-              child: SingleChildScrollView(
-                controller: _mainScrollController,
-                padding: const EdgeInsets.all(AppSizes.paddingM),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // プラン情報カード
-                    _PlanInfoCard(
-                      tripId: widget.tripId,
-                      planId: widget.plan.id,
-                      titleController: _titleController,
-                      descriptionController: _descriptionController,
-                      iconUrl: _iconUrl,
-                      onEdit: _showEditInfoDialog,
-                      onIconChanged: (url) {
-                        setState(() => _iconUrl = url);
-                        _triggerAutoSave();
-                      },
+              // 外部変更通知バナー
+              if (_hasExternalUpdate)
+                GestureDetector(
+                  onTap: _applyExternalUpdate,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSizes.paddingM,
+                      vertical: AppSizes.paddingS,
                     ),
-
-                    const SizedBox(height: AppSizes.paddingL),
-
-                    // ビュー切り替えタブ
-                    _ViewModeToggle(
-                      isMapView: _isMapView,
-                      onChanged: (isMap) {
-                        setState(() => _isMapView = isMap);
-                        if (!isMap && _selectedMapIndex != null) {
-                          // マップ→リスト: 選択アイテムへスクロール
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            _scrollToItem(_selectedMapIndex!);
-                          });
-                        }
-                      },
-                    ),
-
-                    const SizedBox(height: AppSizes.paddingM),
-
-                    // 地図ビューまたはスケジュールセクション
-                    if (_isMapView)
-                      SizedBox(
-                        height: 400,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(AppSizes.radiusL),
-                          child: PlanMapView(
-                            items: _items,
-                            focusIndex: _selectedMapIndex,
-                            onItemTap: (index) {
-                              setState(() => _selectedMapIndex = index);
-                            },
-                            onCardTap: (index) => _editItem(index),
-                          ),
-                        ),
-                      )
-                    else ...[
-                      // スケジュールセクション
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.schedule_outlined,
-                            size: 20,
-                            color: AppColors.textSecondary,
-                          ),
-                          const SizedBox(width: AppSizes.paddingS),
-                          Text('スケジュール', style: AppTypography.titleSmall),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed: _addItem,
-                            icon: const Icon(Icons.add, size: 18),
-                            label: const Text('追加'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.accent,
+                    color: AppColors.accent.withValues(alpha: 0.1),
+                    child: Row(
+                      children: [
+                        Icon(Icons.sync, size: 16, color: AppColors.accent),
+                        const SizedBox(width: AppSizes.paddingXS),
+                        Expanded(
+                          child: Text(
+                            '他のメンバーが変更しました',
+                            style: AppTypography.caption.copyWith(
+                              color: AppColors.accent,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                        ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSizes.paddingS,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.accent,
+                            borderRadius: BorderRadius.circular(
+                              AppSizes.radiusFull,
+                            ),
+                          ),
+                          child: Text(
+                            '反映する',
+                            style: AppTypography.caption.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // ゲストユーザー向けログイン促進バナー
+              if (!ref.watch(isAuthenticatedProvider) &&
+                  ref.watch(currentUserIdProvider) != null)
+                _GuestLoginBanner(onTap: () => _showGuestLoginSheet(context)),
+
+              // メインコンテンツ
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: _mainScrollController,
+                  padding: const EdgeInsets.all(AppSizes.paddingM),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // プラン情報カード
+                      _PlanInfoCard(
+                        tripId: widget.tripId,
+                        planId: widget.plan.id,
+                        titleController: _titleController,
+                        descriptionController: _descriptionController,
+                        iconUrl: _iconUrl,
+                        onEdit: _showEditInfoDialog,
+                        onIconChanged: (url) {
+                          setState(() => _iconUrl = url);
+                          _updateIcon(url);
+                        },
                       ),
 
-                      const SizedBox(height: AppSizes.paddingS),
+                      const SizedBox(height: AppSizes.paddingL),
 
-                      // タイムラインアイテム
-                      if (_items.isEmpty)
-                        _EmptySchedule(onAdd: _addItem)
-                      else
-                        Builder(
-                          builder: (context) {
-                            final tripAsync = ref.watch(
-                              tripDetailProvider(widget.tripId),
-                            );
-                            final trip = tripAsync.valueOrNull;
-                            final startDate = trip?.startDate;
-                            return _buildDayGroupedList(startDate: startDate);
-                          },
+                      // ビュー切り替えタブ
+                      _ViewModeToggle(
+                        isMapView: _isMapView,
+                        onChanged: (isMap) {
+                          setState(() => _isMapView = isMap);
+                          if (!isMap && _selectedItemId != null) {
+                            // マップ→リスト: 選択アイテムへスクロール
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _scrollToItem(_selectedItemId!);
+                            });
+                          }
+                        },
+                      ),
+
+                      const SizedBox(height: AppSizes.paddingM),
+
+                      // 地図ビューまたはスケジュールセクション
+                      if (_isMapView)
+                        SizedBox(
+                          height: 400,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(
+                              AppSizes.radiusL,
+                            ),
+                            child: PlanMapView(
+                              items: _items,
+                              focusItemId: _selectedItemId,
+                              onItemTap: (itemId) {
+                                setState(() => _selectedItemId = itemId);
+                              },
+                              onCardTap: (itemId) => _editItemById(itemId),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        // スケジュールセクション
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.schedule_outlined,
+                              size: 20,
+                              color: AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: AppSizes.paddingS),
+                            Text('スケジュール', style: AppTypography.titleSmall),
+                            const Spacer(),
+                            TextButton.icon(
+                              onPressed: _addItem,
+                              icon: const Icon(Icons.add, size: 18),
+                              label: const Text('追加'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppColors.accent,
+                              ),
+                            ),
+                          ],
                         ),
+
+                        const SizedBox(height: AppSizes.paddingS),
+
+                        // タイムラインアイテム
+                        if (_items.isEmpty)
+                          _EmptySchedule(onAdd: _addItem)
+                        else
+                          Builder(
+                            builder: (context) {
+                              final tripAsync = ref.watch(
+                                tripDetailProvider(widget.tripId),
+                              );
+                              final trip = tripAsync.valueOrNull;
+                              final startDate = trip?.startDate;
+                              return _buildDayGroupedList(startDate: startDate);
+                            },
+                          ),
+                      ],
+
+                      const SizedBox(height: AppSizes.paddingXL),
+
+                      // 予約状況サマリー
+                      _BookingStatusSummary(items: _items),
+
+                      const SizedBox(height: AppSizes.paddingM),
+
+                      // 予約・手配セクション
+                      _BookingLinksSection(destination: _extractDestination()),
+
+                      const SizedBox(height: AppSizes.paddingXL),
+
+                      // 予算管理セクション
+                      _ExpenseSection(tripId: widget.tripId),
+
+                      const SizedBox(height: 100),
                     ],
-
-                    const SizedBox(height: AppSizes.paddingXL),
-
-                    // 予約状況サマリー
-                    _BookingStatusSummary(items: _items),
-
-                    const SizedBox(height: AppSizes.paddingM),
-
-                    // 予約・手配セクション
-                    _BookingLinksSection(destination: _extractDestination()),
-
-                    const SizedBox(height: AppSizes.paddingXL),
-
-                    // 予算管理セクション
-                    _ExpenseSection(tripId: widget.tripId),
-
-                    const SizedBox(height: 100),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1090,12 +1396,14 @@ class _EditHeader extends StatelessWidget {
     required this.isSaving,
     required this.showSaveIndicator,
     required this.onPlayAnimation,
+    required this.onExport,
   });
 
   final VoidCallback onBack;
   final bool isSaving;
   final bool showSaveIndicator;
   final VoidCallback onPlayAnimation;
+  final VoidCallback onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -1121,6 +1429,21 @@ class _EditHeader extends StatelessWidget {
             onPressed: onPlayAnimation,
             icon: const Icon(Icons.movie_creation_outlined),
             tooltip: '旅の軌跡を再生',
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.accent.withValues(alpha: 0.1),
+              foregroundColor: AppColors.accent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSizes.radiusM),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSizes.paddingXS),
+
+          // エクスポートボタン
+          IconButton(
+            onPressed: onExport,
+            icon: const Icon(Icons.ios_share, size: 20),
+            tooltip: 'エクスポート',
             style: IconButton.styleFrom(
               backgroundColor: AppColors.accent.withValues(alpha: 0.1),
               foregroundColor: AppColors.accent,
@@ -1218,6 +1541,500 @@ class _EditHeader extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// エクスポートオプション行
+class _ExportOption extends StatelessWidget {
+  const _ExportOption({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.cardBackground,
+      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppSizes.radiusM),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSizes.paddingM),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusS),
+                ),
+                child: Icon(icon, color: AppColors.accent, size: 22),
+              ),
+              const SizedBox(width: AppSizes.paddingM),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: AppTypography.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: AppColors.textSecondary,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// ゲストユーザー向けログイン促進バナー
+class _GuestLoginBanner extends StatelessWidget {
+  const _GuestLoginBanner({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: AppSizes.paddingM),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSizes.paddingM,
+          vertical: AppSizes.paddingS,
+        ),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              AppColors.accent.withValues(alpha: 0.08),
+              AppColors.subAccent.withValues(alpha: 0.08),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(AppSizes.radiusM),
+          border: Border.all(color: AppColors.accent.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(AppSizes.radiusS),
+              ),
+              child: Icon(
+                Icons.person_add_outlined,
+                size: 18,
+                color: AppColors.accent,
+              ),
+            ),
+            const SizedBox(width: AppSizes.paddingS),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'アカウント登録でデータを保護',
+                    style: AppTypography.caption.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    'ログインするとデータが安全に保存されます',
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.textSecondary,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: AppColors.accent),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// ゲストユーザー向けログイン/サインアップシート
+class _GuestLoginSheet extends ConsumerStatefulWidget {
+  const _GuestLoginSheet({required this.onSuccess});
+
+  final VoidCallback onSuccess;
+
+  @override
+  ConsumerState<_GuestLoginSheet> createState() => _GuestLoginSheetState();
+}
+
+class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
+  bool _showEmailForm = false;
+  bool _isLoading = false;
+  String? _errorMessage;
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _linkWithGoogle() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    final success =
+        await ref.read(authControllerProvider.notifier).linkWithGoogle();
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+    if (success) {
+      widget.onSuccess();
+    } else {
+      setState(() => _errorMessage = 'Googleアカウントとの連携に失敗しました');
+    }
+  }
+
+  Future<void> _linkWithApple() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    final success =
+        await ref.read(authControllerProvider.notifier).linkWithApple();
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+    if (success) {
+      widget.onSuccess();
+    } else {
+      setState(() => _errorMessage = 'Apple IDとの連携に失敗しました');
+    }
+  }
+
+  Future<void> _linkWithEmail() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    final name = _nameController.text.trim();
+
+    if (email.isEmpty || password.isEmpty || name.isEmpty) {
+      setState(() => _errorMessage = 'すべての項目を入力してください');
+      return;
+    }
+    if (password.length < 6) {
+      setState(() => _errorMessage = 'パスワードは6文字以上で入力してください');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    final success = await ref
+        .read(authControllerProvider.notifier)
+        .linkWithEmail(email: email, password: password, name: name);
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+    if (success) {
+      widget.onSuccess();
+    } else {
+      setState(() => _errorMessage = 'メールアドレスでの登録に失敗しました');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSizes.paddingL),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ハンドル
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.textSecondary.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+
+              // アイコン
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusL),
+                ),
+                child: Icon(
+                  Icons.how_to_reg_outlined,
+                  size: 32,
+                  color: AppColors.accent,
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingM),
+
+              Text(
+                'アカウントを作成',
+                style: AppTypography.titleMedium.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingXS),
+              Text(
+                '現在のプランデータはそのまま引き継がれます',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+
+              // エラーメッセージ
+              if (_errorMessage != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSizes.paddingS),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(AppSizes.radiusS),
+                  ),
+                  child: Text(
+                    _errorMessage!,
+                    style: AppTypography.caption.copyWith(
+                      color: Colors.red[700],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: AppSizes.paddingM),
+              ],
+
+              if (_isLoading)
+                const Padding(
+                  padding: EdgeInsets.all(AppSizes.paddingL),
+                  child: CircularProgressIndicator(),
+                )
+              else if (_showEmailForm)
+                _buildEmailForm()
+              else
+                _buildSocialButtons(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSocialButtons() {
+    return Column(
+      children: [
+        // Googleボタン
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: OutlinedButton.icon(
+            onPressed: _linkWithGoogle,
+            icon: Image.asset(
+              'assets/images/google_logo.png',
+              width: 20,
+              height: 20,
+              errorBuilder:
+                  (_, __, ___) => const Icon(Icons.g_mobiledata, size: 24),
+            ),
+            label: const Text('Googleで続ける'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.textPrimary,
+              side: BorderSide(
+                color: AppColors.textSecondary.withValues(alpha: 0.3),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSizes.radiusM),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+
+        // Appleボタン
+        if (Platform.isIOS) ...[
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton.icon(
+              onPressed: _linkWithApple,
+              icon: const Icon(Icons.apple, size: 24),
+              label: const Text('Appleで続ける'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSizes.paddingS),
+        ],
+
+        // メールボタン
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: TextButton.icon(
+            onPressed: () => setState(() => _showEmailForm = true),
+            icon: const Icon(Icons.email_outlined, size: 20),
+            label: const Text('メールアドレスで登録'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.textSecondary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSizes.radiusM),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+
+        // 注記
+        Text(
+          'ゲストデータは端末にのみ保存されています。\nアカウント登録でデータを安全に保護できます。',
+          style: AppTypography.labelSmall.copyWith(
+            color: AppColors.textSecondary,
+            height: 1.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmailForm() {
+    return Column(
+      children: [
+        // 戻るリンク
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed:
+                () => setState(() {
+                  _showEmailForm = false;
+                  _errorMessage = null;
+                }),
+            icon: const Icon(Icons.arrow_back, size: 16),
+            label: const Text('戻る'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.textSecondary,
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+
+        // 名前
+        TextField(
+          controller: _nameController,
+          decoration: InputDecoration(
+            labelText: '名前',
+            hintText: 'ニックネーム',
+            prefixIcon: const Icon(Icons.person_outline, size: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            ),
+          ),
+          textInputAction: TextInputAction.next,
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+
+        // メール
+        TextField(
+          controller: _emailController,
+          decoration: InputDecoration(
+            labelText: 'メールアドレス',
+            hintText: 'example@email.com',
+            prefixIcon: const Icon(Icons.email_outlined, size: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            ),
+          ),
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.next,
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+
+        // パスワード
+        TextField(
+          controller: _passwordController,
+          decoration: InputDecoration(
+            labelText: 'パスワード',
+            hintText: '6文字以上',
+            prefixIcon: const Icon(Icons.lock_outline, size: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            ),
+          ),
+          obscureText: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _linkWithEmail(),
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+
+        // 登録ボタン
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: ElevatedButton(
+            onPressed: _linkWithEmail,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSizes.radiusM),
+              ),
+            ),
+            child: const Text(
+              'アカウントを作成',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2314,6 +3131,7 @@ class _TimelineEditItem extends StatelessWidget {
     super.key,
     required this.item,
     required this.index,
+    required this.reorderIndex,
     required this.isFirst,
     required this.isLast,
     required this.onTap,
@@ -2326,6 +3144,7 @@ class _TimelineEditItem extends StatelessWidget {
 
   final PlanItem item;
   final int index;
+  final int reorderIndex;
   final bool isFirst;
   final bool isLast;
   final VoidCallback onTap;
@@ -2538,7 +3357,7 @@ class _TimelineEditItem extends StatelessWidget {
                             const SizedBox(height: 8),
                           ],
                           ReorderableDragStartListener(
-                            index: index,
+                            index: reorderIndex,
                             child: Container(
                               padding: const EdgeInsets.all(4),
                               decoration: BoxDecoration(
@@ -3450,6 +4269,9 @@ class _AIAssistantSheetState extends ConsumerState<_AIAssistantSheet> {
 
   Future<void> _sendMessage(String message) async {
     if (message.trim().isEmpty) return;
+
+    // キーボードを閉じる
+    FocusManager.instance.primaryFocus?.unfocus();
 
     setState(() {
       _messages.add(_ChatMessage(text: message, isUser: true));
@@ -4820,6 +5642,9 @@ class _AIInsertSheetState extends ConsumerState<_AIInsertSheet> {
 
   Future<void> _sendRequest(String message) async {
     if (message.trim().isEmpty) return;
+
+    // キーボードを閉じる
+    FocusManager.instance.primaryFocus?.unfocus();
 
     setState(() {
       _isLoading = true;
