@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../../../shared/providers/guest_session_provider.dart';
@@ -26,19 +27,25 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
   /// Googleでサインイン
   Future<void> signInWithGoogle() async {
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    try {
       final credential = await _repository.signInWithGoogle();
       await _migrateGuestProfile(credential.user!.uid);
-    });
+      if (mounted) state = const AsyncValue.data(null);
+    } catch (e, st) {
+      if (mounted) state = AsyncValue.error(e, st);
+    }
   }
 
   /// Appleでサインイン
   Future<void> signInWithApple() async {
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    try {
       final credential = await _repository.signInWithApple();
       await _migrateGuestProfile(credential.user!.uid);
-    });
+      if (mounted) state = const AsyncValue.data(null);
+    } catch (e, st) {
+      if (mounted) state = AsyncValue.error(e, st);
+    }
   }
 
   /// メールでサインイン
@@ -47,13 +54,16 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
     required String password,
   }) async {
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    try {
       final credential = await _repository.signInWithEmail(
         email: email,
         password: password,
       );
       await _migrateGuestProfile(credential.user!.uid);
-    });
+      if (mounted) state = const AsyncValue.data(null);
+    } catch (e, st) {
+      if (mounted) state = AsyncValue.error(e, st);
+    }
   }
 
   /// メールでアカウント作成
@@ -63,14 +73,17 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
     required String name,
   }) async {
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    try {
       final credential = await _repository.signUpWithEmail(
         email: email,
         password: password,
         name: name,
       );
       await _migrateGuestProfile(credential.user!.uid);
-    });
+      if (mounted) state = const AsyncValue.data(null);
+    } catch (e, st) {
+      if (mounted) state = AsyncValue.error(e, st);
+    }
   }
 
   /// 匿名アカウントをGoogleにリンク（データ継承）
@@ -78,13 +91,14 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     try {
       await _repository.linkWithGoogle();
-      _finalizeAccountLink();
-      state = const AsyncValue.data(null);
-      return true;
     } catch (e, st) {
       state = AsyncValue.error(e, st);
       return false;
     }
+    // リンク成功後の後処理（失敗してもリンク自体は成功扱い）
+    _finalizeAccountLink();
+    state = const AsyncValue.data(null);
+    return true;
   }
 
   /// 匿名アカウントをAppleにリンク（データ継承）
@@ -92,13 +106,13 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     try {
       await _repository.linkWithApple();
-      _finalizeAccountLink();
-      state = const AsyncValue.data(null);
-      return true;
     } catch (e, st) {
       state = AsyncValue.error(e, st);
       return false;
     }
+    _finalizeAccountLink();
+    state = const AsyncValue.data(null);
+    return true;
   }
 
   /// 匿名アカウントをメールにリンク（データ継承）
@@ -114,13 +128,13 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
         password: password,
         name: name,
       );
-      _finalizeAccountLink();
-      state = const AsyncValue.data(null);
-      return true;
     } catch (e, st) {
       state = AsyncValue.error(e, st);
       return false;
     }
+    _finalizeAccountLink();
+    state = const AsyncValue.data(null);
+    return true;
   }
 
   /// サインアウト
@@ -131,10 +145,14 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
 
   /// アカウントリンク完了後の処理（UIDは同じなのでデータ移行不要）
   void _finalizeAccountLink() {
-    final localProfile = _ref.read(localProfileProvider);
-    if (localProfile != null) {
-      final repository = _ref.read(userProfileRepositoryProvider);
-      repository.saveProfile(localProfile);
+    try {
+      final localProfile = _ref.read(localProfileProvider);
+      if (localProfile != null) {
+        final repository = _ref.read(userProfileRepositoryProvider);
+        repository.saveProfile(localProfile);
+      }
+    } catch (e) {
+      debugPrint('Profile save during link finalization failed: $e');
     }
     _ref.read(guestSessionProvider.notifier).endSession();
   }

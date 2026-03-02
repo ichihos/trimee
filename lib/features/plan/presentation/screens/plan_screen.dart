@@ -388,17 +388,45 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
   Future<void> _selectAndEditPlan(BuildContext context, PlanModel plan) async {
     HapticFeedback.mediumImpact();
 
+    var editPlan = plan;
+
+    // ストリーミング生成されたプラン（id未設定）の場合、先にFirestoreに保存してIDを取得
+    if (plan.id.isEmpty) {
+      final planId = await ref
+          .read(planControllerProvider.notifier)
+          .createPlan(tripId: widget.tripId, plan: plan);
+      if (planId == null || !context.mounted) return;
+      editPlan = plan.copyWith(id: planId);
+    }
+
     // 編集中プランIDを設定（確定はせず、編集状態として保存）
     await ref
         .read(planControllerProvider.notifier)
-        .setEditingPlanId(tripId: widget.tripId, planId: plan.id);
+        .setEditingPlanId(tripId: widget.tripId, planId: editPlan.id);
 
     // 編集画面へ遷移
     if (context.mounted) {
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder:
-              (context) => PlanEditScreen(tripId: widget.tripId, plan: plan),
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  PlanEditScreen(tripId: widget.tripId, plan: editPlan),
+          transitionDuration: const Duration(milliseconds: 300),
+          reverseTransitionDuration: const Duration(milliseconds: 250),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return SlideTransition(
+              position: Tween<Offset>(
+                    begin: const Offset(0.0, 0.3),
+                    end: Offset.zero,
+                  )
+                  .chain(CurveTween(curve: Curves.easeOutCubic))
+                  .animate(animation),
+              child: FadeTransition(
+                opacity: CurveTween(curve: Curves.easeOut).animate(animation),
+                child: child,
+              ),
+            );
+          },
         ),
       );
     }
@@ -563,8 +591,6 @@ class _SlidingPlanTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 短いタイトルを取得
-    final shortTitle = _getShortTitle(plan.title);
     final icon = _getPlanTypeIcon(plan.title);
 
     return Container(
@@ -584,11 +610,15 @@ class _SlidingPlanTitle extends StatelessWidget {
           const SizedBox(width: AppSizes.paddingS),
 
           // タイトル
-          Text(
-            shortTitle,
-            style: AppTypography.titleMedium.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.bold,
+          Flexible(
+            child: Text(
+              plan.title,
+              style: AppTypography.titleMedium.copyWith(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -603,12 +633,6 @@ class _SlidingPlanTitle extends StatelessWidget {
     return AppIconType.plan;
   }
 
-  String _getShortTitle(String title) {
-    if (title.contains('アクティブ')) return 'アクティブプラン';
-    if (title.contains('のんびり')) return 'のんびりプラン';
-    if (title.contains('コスパ')) return 'コスパ重視プラン';
-    return title;
-  }
 }
 
 /// アニメーション付きプランカード
@@ -950,38 +974,11 @@ class _PlanCardHeader extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.paddingS,
-              vertical: AppSizes.paddingXS,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(AppSizes.radiusS),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.how_to_vote, size: 12, color: Colors.white),
-                const SizedBox(width: 4),
-                Text(
-                  '${plan.yesVotes}票',
-                  style: AppTypography.labelSmall.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
   }
 }
-
-/// コンパクト投票ボタン（アニメーション付き）
 
 /// タイムラインアイテム
 class _TimelineItem extends StatefulWidget {

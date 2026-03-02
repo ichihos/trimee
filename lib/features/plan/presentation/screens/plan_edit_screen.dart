@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'travel_animation_screen.dart';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -60,7 +61,6 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   bool _showSaveIndicator = false;
   Timer? _debounceTimer;
   bool _isMapView = false;
-  final Map<String, GlobalKey> _itemKeys = {};
   final ScrollController _mainScrollController = ScrollController();
 
   // リアルタイム同期用
@@ -77,7 +77,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     _descriptionController = TextEditingController(
       text: widget.plan.description,
     );
-    _items = List.from(widget.plan.items);
+    _items = _ensureItemIds(widget.plan.items);
     _iconUrl = widget.plan.iconUrl;
     _lastSaveTime = widget.plan.updatedAt ?? widget.plan.createdAt;
 
@@ -102,6 +102,13 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     // 編集プレゼンスをクリア
     _setPresence(active: false);
     super.dispose();
+  }
+
+  /// アイテムリストのID空欠を埋める
+  List<PlanItem> _ensureItemIds(List<PlanItem> items) {
+    return items
+        .map((item) => item.id.isEmpty ? item.copyWith(id: _uuid.v4()) : item)
+        .toList();
   }
 
   /// 編集プレゼンスを設定/解除
@@ -186,14 +193,18 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
             updated = true;
           }
           // アイテム (ドラッグ中以外)
-          if (!_isDragging && plan.items.length != _items.length) {
-            _items = List.from(plan.items);
-            updated = true;
-          } else if (!_isDragging) {
-            // 内容の比較（簡易的）
-            // deep copy or proper diff is better, but this suffices for now
-            _items = List.from(plan.items); // Force update to be safe
-            updated = true;
+          if (!_isDragging) {
+            // セーフガード: サーバー側のitemsが空で、ローカルが空でない場合は上書きしない
+            // (編集画面遷移直後などに空のデータが飛んできて消えるのを防ぐ)
+            if (plan.items.isEmpty && _items.isNotEmpty) {
+              // 無視する
+            } else if (plan.items.length != _items.length) {
+              _items = _ensureItemIds(plan.items);
+              updated = true;
+            } else {
+              _items = _ensureItemIds(plan.items);
+              updated = true;
+            }
           }
 
           if (updated && mounted) {
@@ -219,7 +230,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     setState(() {
       _titleController.text = plan.title;
       _descriptionController.text = plan.description ?? '';
-      _items = List.from(plan.items);
+      _items = _ensureItemIds(plan.items);
       _iconUrl = plan.iconUrl;
       _hasExternalUpdate = false;
       _lastSaveTime = plan.updatedAt;
@@ -340,11 +351,22 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     final descController = TextEditingController(
       text: _descriptionController.text,
     );
+    final descFocus = FocusNode();
 
-    showDialog(
+    void save(BuildContext dialogContext) {
+      setState(() {
+        _titleController.text = titleController.text;
+        _descriptionController.text = descController.text;
+      });
+      _updateTitle(titleController.text);
+      _updateDescription(descController.text);
+      Navigator.pop(dialogContext);
+    }
+
+    showDialog<void>(
       context: context,
       builder:
-          (context) => AlertDialog(
+          (dialogContext) => AlertDialog(
             title: const Text('プラン詳細を編集'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -356,52 +378,52 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                     hintText: 'プランのタイトル',
                   ),
                   autofocus: true,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => descFocus.requestFocus(),
                 ),
                 const SizedBox(height: AppSizes.paddingM),
                 TextField(
                   controller: descController,
+                  focusNode: descFocus,
                   decoration: const InputDecoration(
                     labelText: '説明',
                     hintText: 'プランの説明',
                   ),
                   maxLines: 3,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => save(dialogContext),
                 ),
               ],
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('キャンセル'),
               ),
               FilledButton(
-                onPressed: () {
-                  setState(() {
-                    _titleController.text = titleController.text;
-                    _descriptionController.text = descController.text;
-                  });
-                  _updateTitle(titleController.text);
-                  _updateDescription(descController.text);
-                  Navigator.pop(context);
-                },
+                onPressed: () => save(dialogContext),
                 child: const Text('保存'),
               ),
             ],
           ),
-    );
+    ).then((_) {
+      titleController.dispose();
+      descController.dispose();
+      descFocus.dispose();
+    });
   }
 
   void _scrollToItem(String itemId) {
-    if (!_itemKeys.containsKey(itemId)) return;
+    final index = _items.indexWhere((e) => e.id == itemId);
+    if (index < 0) return;
 
-    final key = _itemKeys[itemId];
-    if (key?.currentContext != null) {
-      Scrollable.ensureVisible(
-        key!.currentContext!,
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeInOut,
-        alignment: 0.1, // 上部から少し余裕を持たせる
-      );
-    }
+    // アイテムの推定位置までスクロール（ヘッダー・挿入ボタン分を考慮）
+    final estimatedOffset = index * 120.0;
+    _mainScrollController.animateTo(
+      estimatedOffset.clamp(0.0, _mainScrollController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _addItem() {
@@ -602,9 +624,6 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       }
     }
 
-    // _itemKeys maintenance: remove unused keys
-    final currentIds = _items.map((e) => e.id).toSet();
-    _itemKeys.removeWhere((id, _) => !currentIds.contains(id));
 
     return ReorderableListView.builder(
       buildDefaultDragHandles: false, // カスタムハンドルを使用
@@ -693,11 +712,8 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         final isFirstInDay = indexInDay == 0;
         final isLastInDay = indexInDay == dayItems.length - 1;
 
-        // IDベースの安定したキーを使用
-        final itemKey = _itemKeys.putIfAbsent(item.id, () => GlobalKey());
-
         return _TimelineEditItem(
-          key: itemKey,
+          key: ValueKey(item.id),
           item: item,
           index: itemIndex,
           reorderIndex: index,
@@ -1701,13 +1717,42 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
+  }
+
+  String _extractErrorMessage(Object error, String fallback) {
+    final msg = error.toString();
+    // FirebaseAuthException のメッセージを抽出
+    if (msg.contains('email-already-in-use')) {
+      return 'このメールアドレスは既に使用されています';
+    }
+    if (msg.contains('credential-already-in-use') || msg.contains('provider-already-linked')) {
+      return 'このアカウントは既に別のユーザーに紐づいています';
+    }
+    if (msg.contains('invalid-email')) {
+      return 'メールアドレスの形式が正しくありません';
+    }
+    if (msg.contains('weak-password')) {
+      return 'パスワードが弱すぎます。6文字以上にしてください';
+    }
+    if (msg.contains('popup-closed-by-user') || msg.contains('user-cancelled')) {
+      return 'ログインがキャンセルされました';
+    }
+    if (msg.contains('network-request-failed')) {
+      return 'ネットワークエラーが発生しました。接続を確認してください';
+    }
+    debugPrint('Auth error: $msg');
+    return fallback;
   }
 
   Future<void> _linkWithGoogle() async {
@@ -1722,7 +1767,11 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
     if (success) {
       widget.onSuccess();
     } else {
-      setState(() => _errorMessage = 'Googleアカウントとの連携に失敗しました');
+      final authState = ref.read(authControllerProvider);
+      final error = authState.error;
+      setState(() => _errorMessage = error != null
+          ? _extractErrorMessage(error, 'Googleアカウントとの連携に失敗しました')
+          : 'Googleアカウントとの連携に失敗しました');
     }
   }
 
@@ -1738,7 +1787,11 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
     if (success) {
       widget.onSuccess();
     } else {
-      setState(() => _errorMessage = 'Apple IDとの連携に失敗しました');
+      final authState = ref.read(authControllerProvider);
+      final error = authState.error;
+      setState(() => _errorMessage = error != null
+          ? _extractErrorMessage(error, 'Apple IDとの連携に失敗しました')
+          : 'Apple IDとの連携に失敗しました');
     }
   }
 
@@ -1768,7 +1821,11 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
     if (success) {
       widget.onSuccess();
     } else {
-      setState(() => _errorMessage = 'メールアドレスでの登録に失敗しました');
+      final authState = ref.read(authControllerProvider);
+      final error = authState.error;
+      setState(() => _errorMessage = error != null
+          ? _extractErrorMessage(error, 'メールアドレスでの登録に失敗しました')
+          : 'メールアドレスでの登録に失敗しました');
     }
   }
 
@@ -1894,7 +1951,7 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
         const SizedBox(height: AppSizes.paddingS),
 
         // Appleボタン
-        if (Platform.isIOS) ...[
+        if (!kIsWeb && Platform.isIOS) ...[
           SizedBox(
             width: double.infinity,
             height: 52,
@@ -1978,13 +2035,16 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
               borderRadius: BorderRadius.circular(AppSizes.radiusM),
             ),
           ),
+          textCapitalization: TextCapitalization.words,
           textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _emailFocus.requestFocus(),
         ),
         const SizedBox(height: AppSizes.paddingS),
 
         // メール
         TextField(
           controller: _emailController,
+          focusNode: _emailFocus,
           decoration: InputDecoration(
             labelText: 'メールアドレス',
             hintText: 'example@email.com',
@@ -1995,12 +2055,14 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
           ),
           keyboardType: TextInputType.emailAddress,
           textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _passwordFocus.requestFocus(),
         ),
         const SizedBox(height: AppSizes.paddingS),
 
         // パスワード
         TextField(
           controller: _passwordController,
+          focusNode: _passwordFocus,
           decoration: InputDecoration(
             labelText: 'パスワード',
             hintText: '6文字以上',
@@ -2783,12 +2845,14 @@ class _AddExpenseSheet extends ConsumerStatefulWidget {
 class _AddExpenseSheetState extends ConsumerState<_AddExpenseSheet> {
   final _descriptionController = TextEditingController();
   final _amountController = TextEditingController();
+  final _amountFocus = FocusNode();
   ExpenseCategory _selectedCategory = ExpenseCategory.other;
 
   @override
   void dispose() {
     _descriptionController.dispose();
     _amountController.dispose();
+    _amountFocus.dispose();
     super.dispose();
   }
 
@@ -2922,12 +2986,15 @@ class _AddExpenseSheetState extends ConsumerState<_AddExpenseSheet> {
                 ),
               ),
               autofocus: true,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => _amountFocus.requestFocus(),
             ),
             const SizedBox(height: AppSizes.paddingM),
 
             // 金額入力
             TextField(
               controller: _amountController,
+              focusNode: _amountFocus,
               decoration: InputDecoration(
                 labelText: '金額',
                 hintText: '10000',
@@ -2937,6 +3004,8 @@ class _AddExpenseSheetState extends ConsumerState<_AddExpenseSheet> {
                 ),
               ),
               keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(),
             ),
             const SizedBox(height: AppSizes.paddingL),
 
@@ -3481,6 +3550,10 @@ class _EditItemSheetState extends State<_EditItemSheet> {
   late TextEditingController _durationController;
   late TextEditingController _bookingUrlController;
   late TextEditingController _bookingNoteController;
+  final _durationFocus = FocusNode();
+  final _notesFocus = FocusNode();
+  final _bookingUrlFocus = FocusNode();
+  final _bookingNoteFocus = FocusNode();
   TimeOfDay _selectedTime = const TimeOfDay(hour: 10, minute: 0);
   int _selectedDay = 1;
   bool _isBooked = false;
@@ -3529,6 +3602,10 @@ class _EditItemSheetState extends State<_EditItemSheet> {
     _durationController.dispose();
     _bookingUrlController.dispose();
     _bookingNoteController.dispose();
+    _durationFocus.dispose();
+    _notesFocus.dispose();
+    _bookingUrlFocus.dispose();
+    _bookingNoteFocus.dispose();
     super.dispose();
   }
 
@@ -3873,6 +3950,8 @@ class _EditItemSheetState extends State<_EditItemSheet> {
                 ),
               ),
               autofocus: isNew,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => _durationFocus.requestFocus(),
             ),
             const SizedBox(height: AppSizes.paddingS),
 
@@ -3983,6 +4062,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
             // 滞在時間
             TextField(
               controller: _durationController,
+              focusNode: _durationFocus,
               decoration: InputDecoration(
                 labelText: '滞在時間（分）',
                 hintText: '60',
@@ -3992,12 +4072,15 @@ class _EditItemSheetState extends State<_EditItemSheet> {
                 ),
               ),
               keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => _notesFocus.requestFocus(),
             ),
             const SizedBox(height: AppSizes.paddingM),
 
             // メモ入力
             TextField(
               controller: _notesController,
+              focusNode: _notesFocus,
               decoration: InputDecoration(
                 labelText: 'メモ（任意）',
                 hintText: '過ごし方やポイントなど',
@@ -4007,6 +4090,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
                 ),
               ),
               maxLines: 2,
+              textInputAction: TextInputAction.newline,
             ),
             const SizedBox(height: AppSizes.paddingL),
 
@@ -4032,6 +4116,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
               const SizedBox(height: AppSizes.paddingS),
               TextField(
                 controller: _bookingUrlController,
+                focusNode: _bookingUrlFocus,
                 decoration: InputDecoration(
                   labelText: '予約URL（任意）',
                   hintText: 'https://...',
@@ -4041,6 +4126,8 @@ class _EditItemSheetState extends State<_EditItemSheet> {
                   ),
                 ),
                 keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _bookingNoteFocus.requestFocus(),
               ),
               if (_bookingUrlController.text.trim().isNotEmpty) ...[
                 const SizedBox(height: AppSizes.paddingXS),
@@ -4076,6 +4163,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
               const SizedBox(height: AppSizes.paddingS),
               TextField(
                 controller: _bookingNoteController,
+                focusNode: _bookingNoteFocus,
                 decoration: InputDecoration(
                   labelText: '予約メモ（任意）',
                   hintText: '確認番号、予約名など',
@@ -4085,6 +4173,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
                   ),
                 ),
                 maxLines: 2,
+                textInputAction: TextInputAction.done,
               ),
               const SizedBox(height: AppSizes.paddingM),
               // 予約画像
@@ -4594,6 +4683,7 @@ class _AIAssistantSheetState extends ConsumerState<_AIAssistantSheet> {
                         vertical: AppSizes.paddingS,
                       ),
                     ),
+                    textInputAction: TextInputAction.send,
                     onSubmitted: _sendMessage,
                   ),
                 ),
@@ -5816,6 +5906,7 @@ class _AIInsertSheetState extends ConsumerState<_AIInsertSheet> {
                         vertical: 10,
                       ),
                     ),
+                    textInputAction: TextInputAction.send,
                     onSubmitted: _sendRequest,
                     enabled: !_isLoading,
                   ),

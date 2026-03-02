@@ -339,13 +339,15 @@ class AIService {
 
     // 日程情報を計算
     String dateInfo;
-    int totalDays = 1;
+    String totalDaysInstruction;
     if (startDate != null && endDate != null) {
-      totalDays = endDate.difference(startDate).inDays + 1;
+      final totalDays = endDate.difference(startDate).inDays + 1;
       dateInfo =
           '${startDate.month}/${startDate.day}〜${endDate.month}/${endDate.day}（$totalDays日間）';
+      totalDaysInstruction = '全${totalDays}日分のフルスケジュールを必ず生成すること（day: 1 から day: $totalDays まで）';
     } else {
-      dateInfo = '日程未定（1日としてプラン作成）';
+      dateInfo = '日程未定（AIが最適な日数を判断）';
+      totalDaysInstruction = '日程が未定のため、カード内容（行きたい場所の数・距離・やりたいことの量）から現実的な旅行日数を判断し、その日数分のスケジュールを生成すること。日帰り〜5日程度の範囲で適切に決定する';
     }
 
     // 各カテゴリのカード情報を整形
@@ -456,7 +458,7 @@ ${allCardTitles.join('、')}
 【重要な指示】
 
 【スケジュール生成のルール】
-- **全${totalDays}日分のフルスケジュールを必ず生成すること**（day: 1 から day: $totalDays まで）
+- **$totalDaysInstruction**
 - **1日目の最初のアイテムは必ず「集合」にすること**（location: "集合場所" または "東京駅" などの具体的な場所）
 - 各日のタイムスケジュール：
   - 1日目: 集合〜21:00（集合、移動、午前・午後・夜のアクティビティ）

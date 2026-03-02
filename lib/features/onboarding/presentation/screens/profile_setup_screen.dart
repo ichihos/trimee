@@ -18,7 +18,8 @@ class ProfileSetupScreen extends ConsumerStatefulWidget {
   ConsumerState<ProfileSetupScreen> createState() => _ProfileSetupScreenState();
 }
 
-class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen> {
+class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
+    with TickerProviderStateMixin {
   final _pageController = PageController();
   int _currentPage = 0;
 
@@ -29,9 +30,35 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen> {
 
   bool _isLoading = false;
 
+  late AnimationController _iconController;
+  late Animation<double> _iconScale;
+  late Animation<double> _iconOpacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _iconController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _iconScale = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _iconController, curve: Curves.elasticOut),
+    );
+    _iconOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _iconController,
+        curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+      ),
+    );
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) _iconController.forward();
+    });
+  }
+
   @override
   void dispose() {
     _pageController.dispose();
+    _iconController.dispose();
     super.dispose();
   }
 
@@ -72,7 +99,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen> {
         children: List.generate(2, (index) {
           final isActive = index <= _currentPage;
           return Expanded(
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeInOut,
               margin: EdgeInsets.only(right: index < 1 ? 8 : 0),
               height: 4,
               decoration: BoxDecoration(
@@ -94,17 +123,26 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen> {
         children: [
           const SizedBox(height: AppSizes.paddingL),
           Center(
-            child: Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.person_outline_rounded,
-                color: AppColors.accent,
-                size: 40,
+            child: AnimatedBuilder(
+              animation: _iconController,
+              builder: (context, child) {
+                return Transform.scale(
+                  scale: _iconScale.value,
+                  child: Opacity(opacity: _iconOpacity.value, child: child),
+                );
+              },
+              child: Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.person_outline_rounded,
+                  color: AppColors.accent,
+                  size: 40,
+                ),
               ),
             ),
           ),

@@ -33,6 +33,9 @@ dependencies:
   # Mapbox
   mapbox_maps_flutter: ^2.2.0 #2.18.0がなさそうなので2.2.0に変更
 
+  # Lottie Animation
+  lottie: ^3.3.1
+
   # Export
   # ffmpeg_kit_flutter_min_gpl: ^5.1.0 # Temporarily disabled due to download issues
   path_provider: ^2.1.5
@@ -91,6 +94,7 @@ flutter:
   assets:
     - assets/images/
     - assets/icons/
+    - assets/lottie/
 
   fonts:
     - family: JosefinSans

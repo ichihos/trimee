@@ -9,10 +9,9 @@ import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/models/trip_member_model.dart';
 import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/providers/firebase_providers.dart';
+import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../../shared/widgets/name_input_dialog.dart';
 import '../providers/trip_provider.dart';
-
-const _uuid = Uuid();
 
 /// メンバー待機画面
 class MemberLobbyScreen extends ConsumerStatefulWidget {
@@ -52,8 +51,8 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
     if (_hasCheckedName) return;
     _hasCheckedName = true;
 
-    final tripAsync = ref.read(tripDetailProvider(widget.tripId));
-    final trip = tripAsync.valueOrNull;
+    final trip = await ref.read(tripDetailProvider(widget.tripId).future);
+    if (!mounted) return;
     final userId = ref.read(currentUserIdProvider);
 
     if (userId != null && trip != null) {
@@ -85,6 +84,7 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
   }
 
   void _copyInviteLink() {
+    HapticFeedback.lightImpact();
     final link = 'https://trimee-ai.com/join/${widget.tripId}';
     Clipboard.setData(ClipboardData(text: link));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -108,7 +108,23 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
               borderRadius: BorderRadius.circular(AppSizes.radiusL),
             ),
             title: Text('カード集めを開始', style: AppTypography.titleMedium),
-            content: Text('メンバー全員が移動します', style: AppTypography.bodyMedium),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'カード集めの画面に移動し、メンバー全員が行きたい場所を登録できるようになります。',
+                  style: AppTypography.bodyMedium,
+                ),
+                const SizedBox(height: AppSizes.paddingS),
+                Text(
+                  '後からでもメンバーを追加できます。',
+                  style: AppTypography.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
@@ -146,174 +162,9 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
   }
 
   Future<void> _showAddMemberDialog() async {
-    final nameController = TextEditingController();
-    final departureController = TextEditingController();
-
-    final result = await showDialog<Map<String, String>>(
+    await showDialog<void>(
       context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSizes.radiusL),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSizes.paddingL),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'メンバーを追加',
-                    style: AppTypography.titleMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSizes.paddingS),
-                  Text(
-                    'セッションに参加できないメンバーを追加します',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSizes.paddingL),
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: '名前',
-                      hintText: '例: たろう',
-                      prefixIcon: Icon(Icons.person_outline),
-                    ),
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: AppSizes.paddingM),
-                  TextField(
-                    controller: departureController,
-                    decoration: const InputDecoration(
-                      labelText: '出発地点（任意）',
-                      hintText: '例: 東京駅',
-                      prefixIcon: Icon(Icons.location_on_outlined),
-                    ),
-                  ),
-                  const SizedBox(height: AppSizes.paddingL),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('キャンセル'),
-                        ),
-                      ),
-                      const SizedBox(width: AppSizes.paddingM),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            final name = nameController.text.trim();
-                            if (name.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('名前を入力してください')),
-                              );
-                              return;
-                            }
-                            Navigator.pop(context, {
-                              'name': name,
-                              'departure': departureController.text.trim(),
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.accent,
-                          ),
-                          child: const Text(
-                            '追加',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-    );
-
-    if (result != null && mounted) {
-      final personalLinkId = _uuid.v4().substring(0, 8);
-      final memberId = 'manual_$personalLinkId';
-      final member = TripMember(
-        userId: memberId,
-        displayName: result['name']!,
-        departurePoint:
-            result['departure']!.isNotEmpty ? result['departure'] : null,
-        isManual: true,
-        personalLinkId: personalLinkId,
-        joinedAt: DateTime.now(),
-      );
-
-      await ref
-          .read(tripControllerProvider.notifier)
-          .updateMemberDetails(widget.tripId, memberId, member);
-
-      if (mounted) {
-        _showPersonalLinkDialog(member);
-      }
-    }
-  }
-
-  void _showPersonalLinkDialog(TripMember member) {
-    final link =
-        'https://trimee-ai.com/join/${widget.tripId}/${member.personalLinkId}';
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text('${member.displayName}さんの招待リンク'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'このリンクを共有してください。次回以降はこのリンクで参加できます。',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: AppSizes.paddingM),
-                Container(
-                  padding: const EdgeInsets.all(AppSizes.paddingM),
-                  decoration: BoxDecoration(
-                    color: AppColors.cardBackground,
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          link,
-                          style: AppTypography.caption,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: link));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('リンクをコピーしました')),
-                          );
-                        },
-                        icon: const Icon(Icons.copy_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('閉じる'),
-              ),
-            ],
-          ),
+      builder: (context) => _AddMemberDialog(tripId: widget.tripId),
     );
   }
 
@@ -491,7 +342,10 @@ class _MemberLobbyScreenState extends ConsumerState<MemberLobbyScreen> {
 
                 // メンバーを追加ボタン
                 TextButton.icon(
-                  onPressed: _showAddMemberDialog,
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    _showAddMemberDialog();
+                  },
                   icon: const Icon(Icons.person_add_outlined),
                   label: const Text('メンバーを追加'),
                   style: TextButton.styleFrom(
@@ -713,6 +567,241 @@ class _MemberTile extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// メンバー追加ダイアログ（入力 → 成功の2ステート）
+class _AddMemberDialog extends ConsumerStatefulWidget {
+  const _AddMemberDialog({required this.tripId});
+
+  final String tripId;
+
+  @override
+  ConsumerState<_AddMemberDialog> createState() => _AddMemberDialogState();
+}
+
+class _AddMemberDialogState extends ConsumerState<_AddMemberDialog> {
+  final _nameController = TextEditingController();
+  final _departureController = TextEditingController();
+  final _departureFocus = FocusNode();
+  bool _isProcessing = false;
+  bool _isSuccess = false;
+  String _addedName = '';
+  String _personalLink = '';
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _departureController.dispose();
+    _departureFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addMember() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('名前を入力してください')),
+      );
+      return;
+    }
+
+    setState(() => _isProcessing = true);
+
+    try {
+      final personalLinkId = const Uuid().v4().substring(0, 8);
+      final memberId = 'manual_$personalLinkId';
+      final departure = _departureController.text.trim();
+      final member = TripMember(
+        userId: memberId,
+        displayName: name,
+        departurePoint: departure.isNotEmpty ? departure : null,
+        isManual: true,
+        personalLinkId: personalLinkId,
+        joinedAt: DateTime.now(),
+      );
+
+      await ref
+          .read(tripControllerProvider.notifier)
+          .updateMemberDetails(widget.tripId, memberId, member);
+
+      if (mounted) {
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _isSuccess = true;
+          _addedName = name;
+          _personalLink =
+              'https://trimee-ai.com/join/${widget.tripId}/$personalLinkId';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('エラー: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSizes.radiusL),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSizes.paddingL),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          transitionBuilder: (child, animation) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          child: _isSuccess ? _buildSuccessState() : _buildInputState(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputState() {
+    return Column(
+      key: const ValueKey('input'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'メンバーを追加',
+          style: AppTypography.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+        Text(
+          'セッションに参加できないメンバーを追加します',
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+        TextField(
+          controller: _nameController,
+          decoration: const InputDecoration(
+            labelText: '名前',
+            hintText: '例: たろう',
+            prefixIcon: Icon(Icons.person_outline),
+          ),
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _departureFocus.requestFocus(),
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+        TextField(
+          controller: _departureController,
+          focusNode: _departureFocus,
+          decoration: const InputDecoration(
+            labelText: '出発地点（任意）',
+            hintText: '例: 東京駅',
+            prefixIcon: Icon(Icons.location_on_outlined),
+          ),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _addMember(),
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('キャンセル'),
+              ),
+            ),
+            const SizedBox(width: AppSizes.paddingM),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _isProcessing ? null : _addMember,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                ),
+                child: _isProcessing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        '追加',
+                        style: TextStyle(color: Colors.white),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSuccessState() {
+    return Column(
+      key: const ValueKey('success'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Center(child: SuccessCheckAnimation(size: 60)),
+        const SizedBox(height: AppSizes.paddingM),
+        Text(
+          '$_addedNameさんを追加しました',
+          style: AppTypography.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+        Text(
+          'このリンクを共有してください。次回以降はこのリンクで参加できます。',
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+        Container(
+          padding: const EdgeInsets.all(AppSizes.paddingM),
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(AppSizes.radiusM),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _personalLink,
+                  style: AppTypography.caption,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  Clipboard.setData(ClipboardData(text: _personalLink));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('リンクをコピーしました')),
+                  );
+                },
+                icon: const Icon(Icons.copy_rounded),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('閉じる'),
+        ),
+      ],
     );
   }
 }

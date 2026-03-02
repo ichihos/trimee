@@ -8,7 +8,10 @@ import '../../../../core/constants/app_strings.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/providers/theme_provider.dart';
 import '../../../../shared/providers/guest_session_provider.dart';
-import '../../../../shared/widgets/name_input_dialog.dart';
+import '../../../../shared/providers/firebase_providers.dart' show currentUserIdProvider, isAuthenticatedProvider;
+import '../../../../shared/providers/user_profile_provider.dart';
+import '../../../../shared/models/user_profile_model.dart';
+import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/widgets/app_card.dart';
 import '../../../../shared/widgets/app_icon.dart';
@@ -184,7 +187,7 @@ class HomeScreen extends ConsumerWidget {
 
   void _showJoinTripDialog(BuildContext context) {
     final controller = TextEditingController();
-    showDialog(
+    showDialog<void>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
@@ -207,6 +210,7 @@ class HomeScreen extends ConsumerWidget {
               TextField(
                 controller: controller,
                 autofocus: true,
+                textInputAction: TextInputAction.go,
                 decoration: InputDecoration(
                   hintText: 'トリップID',
                   hintStyle: TextStyle(color: AppColors.textSecondary),
@@ -268,7 +272,7 @@ class HomeScreen extends ConsumerWidget {
           ],
         );
       },
-    );
+    ).then((_) => controller.dispose());
   }
 
   /// 旅程のステータスに応じて適切な画面に遷移
@@ -304,8 +308,40 @@ class HomeScreen extends ConsumerWidget {
             context: context,
             barrierDismissible: false,
             builder:
-                (context) => const Center(
-                  child: CircularProgressIndicator(color: AppColors.accent),
+                (context) => Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSizes.paddingXL,
+                      vertical: AppSizes.paddingL,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.cardBackground,
+                      borderRadius: BorderRadius.circular(AppSizes.radiusL),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(
+                          color: AppColors.accent,
+                          strokeWidth: 3,
+                        ),
+                        const SizedBox(height: AppSizes.paddingM),
+                        Text(
+                          'プランを読み込み中...',
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
           );
 
@@ -322,13 +358,27 @@ class HomeScreen extends ConsumerWidget {
 
             if (confirmedPlan != null && context.mounted) {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder:
-                      (context) => PlanViewScreen(
+                PageRouteBuilder(
+                  pageBuilder: (context, animation, secondaryAnimation) =>
+                      PlanViewScreen(
                         tripId: trip.id,
                         plan: confirmedPlan,
                         trip: trip,
                       ),
+                  transitionDuration: const Duration(milliseconds: 300),
+                  reverseTransitionDuration: const Duration(milliseconds: 250),
+                  transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                    return SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0.0, 0.3),
+                        end: Offset.zero,
+                      ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation),
+                      child: FadeTransition(
+                        opacity: CurveTween(curve: Curves.easeOut).animate(animation),
+                        child: child,
+                      ),
+                    );
+                  },
                 ),
               );
               return;
@@ -388,8 +438,40 @@ class HomeScreen extends ConsumerWidget {
       context: context,
       barrierDismissible: false,
       builder:
-          (context) => const Center(
-            child: CircularProgressIndicator(color: AppColors.accent),
+          (context) => Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSizes.paddingXL,
+                vertical: AppSizes.paddingL,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.cardBackground,
+                borderRadius: BorderRadius.circular(AppSizes.radiusL),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(
+                    color: AppColors.accent,
+                    strokeWidth: 3,
+                  ),
+                  const SizedBox(height: AppSizes.paddingM),
+                  Text(
+                    '編集中のプランを読み込み中...',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
     );
 
@@ -405,9 +487,23 @@ class HomeScreen extends ConsumerWidget {
 
       if (editingPlan != null && context.mounted) {
         Navigator.of(context).push(
-          MaterialPageRoute(
-            builder:
-                (context) => PlanEditScreen(tripId: trip.id, plan: editingPlan),
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                PlanEditScreen(tripId: trip.id, plan: editingPlan),
+            transitionDuration: const Duration(milliseconds: 300),
+            reverseTransitionDuration: const Duration(milliseconds: 250),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0.0, 0.3),
+                  end: Offset.zero,
+                ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation),
+                child: FadeTransition(
+                  opacity: CurveTween(curve: Curves.easeOut).animate(animation),
+                  child: child,
+                ),
+              );
+            },
           ),
         );
         return;
@@ -766,6 +862,7 @@ class _CreateTripButtonState extends State<_CreateTripButton>
       onTapDown: (_) => _controller.forward(),
       onTapUp: (_) {
         _controller.reverse();
+        HapticFeedback.lightImpact();
         widget.onTap();
       },
       onTapCancel: () => _controller.reverse(),
@@ -1451,7 +1548,7 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-/// 旅行作成シート
+/// 旅行作成シート（2ステップ: 旅の情報 → あなたの情報）
 class _CreateTripSheet extends ConsumerStatefulWidget {
   const _CreateTripSheet();
 
@@ -1461,13 +1558,35 @@ class _CreateTripSheet extends ConsumerStatefulWidget {
 
 class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
   final _titleController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _departureController = TextEditingController();
+  final _departureFocus = FocusNode();
   DateTimeRange? _dateRange;
   bool _isDateUndecided = false;
   bool _isLoading = false;
+  bool _showSuccess = false;
+  int _currentStep = 0; // 0 = 旅の情報, 1 = あなたの情報
+
+  @override
+  void initState() {
+    super.initState();
+    // 既存の名前があればプリセット
+    final existingName = ref.read(guestNameProvider);
+    if (existingName != null && existingName.isNotEmpty) {
+      _nameController.text = existingName;
+    }
+    final session = ref.read(guestSessionProvider);
+    if (session?.departurePoint != null) {
+      _departureController.text = session!.departurePoint!;
+    }
+  }
 
   @override
   void dispose() {
     _titleController.dispose();
+    _nameController.dispose();
+    _departureController.dispose();
+    _departureFocus.dispose();
     super.dispose();
   }
 
@@ -1504,192 +1623,389 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
             ),
             const SizedBox(height: AppSizes.paddingL),
 
-            // タイトル
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppColors.accent.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                  ),
-                  child: const Icon(
-                    Icons.flight_takeoff_rounded,
-                    color: AppColors.accent,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: AppSizes.paddingS),
-                Text(AppStrings.newTrip, style: AppTypography.headlineSmall),
-              ],
-            ),
-            const SizedBox(height: AppSizes.paddingXS),
-            Text(
-              'メンバーの希望を集めて旅を計画',
-              style: AppTypography.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: AppSizes.paddingL),
-
-            // 旅行タイトル入力
-            TextField(
-              controller: _titleController,
-              decoration: InputDecoration(
-                labelText: AppStrings.tripTitle,
-                hintText: AppStrings.tripTitleHint,
-                prefixIcon: Icon(
-                  Icons.edit_outlined,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              textInputAction: TextInputAction.done,
-            ),
-            const SizedBox(height: AppSizes.paddingM),
-
-            // 日程オプション
-            InkWell(
-              onTap: () {
-                setState(() {
-                  _isDateUndecided = !_isDateUndecided;
-                  if (_isDateUndecided) _dateRange = null;
-                });
-              },
-              borderRadius: BorderRadius.circular(AppSizes.radiusM),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: AppSizes.paddingS,
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color:
-                            _isDateUndecided
-                                ? AppColors.accent
-                                : Colors.transparent,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color:
-                              _isDateUndecided
-                                  ? AppColors.accent
-                                  : AppColors.border,
-                          width: 2,
-                        ),
-                      ),
-                      child:
-                          _isDateUndecided
-                              ? const Icon(
-                                Icons.check_rounded,
-                                size: 16,
-                                color: Colors.white,
-                              )
-                              : null,
+            // 成功表示
+            if (_showSuccess)
+              _buildSuccessState()
+            else
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0.15, 0),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      )),
+                      child: child,
                     ),
-                    const SizedBox(width: AppSizes.paddingM),
-                    Text(
-                      AppStrings.tripDateUndecided,
-                      style: AppTypography.bodyMedium,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // 日程選択
-            if (!_isDateUndecided) ...[
-              const SizedBox(height: AppSizes.paddingS),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final range = await showDateRangePicker(
-                    context: context,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                    saveText: '決定',
-                    initialEntryMode: DatePickerEntryMode.calendarOnly,
                   );
-                  if (range != null) {
-                    setState(() => _dateRange = range);
-                    // Decide -> Auto Create -> Navigate Logic
-                    if (mounted) {
-                      await _createTrip(skipUserInfo: true);
-                    }
-                  }
                 },
-                icon: const Icon(Icons.calendar_today_outlined),
-                label: Text(
-                  _dateRange != null
-                      ? '${_dateRange!.start.month}/${_dateRange!.start.day} - ${_dateRange!.end.month}/${_dateRange!.end.day}'
-                      : '日程を選択',
-                ),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
+                child: _currentStep == 0
+                    ? _buildStepOne(key: const ValueKey(0))
+                    : _buildStepTwo(key: const ValueKey(1)),
               ),
-            ],
-
-            const SizedBox(height: AppSizes.paddingL),
-
-            // 作成ボタン（手動）
-            ElevatedButton(
-              onPressed: _isLoading ? null : () => _createTrip(),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                minimumSize: const Size.fromHeight(52),
-              ),
-              child:
-                  _isLoading
-                      ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                      : Text(
-                        '旅を始める',
-                        style: AppTypography.button.copyWith(
-                          color: Colors.white,
-                        ),
-                      ),
-            ),
-            const SizedBox(height: AppSizes.paddingS),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _createTrip({bool skipUserInfo = false}) async {
+  /// ステップ1: 旅の情報（タイトル・日程）
+  Widget _buildStepOne({Key? key}) {
+    return Column(
+      key: key,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // タイトル
+        Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(AppSizes.radiusM),
+              ),
+              child: const Icon(
+                Icons.flight_takeoff_rounded,
+                color: AppColors.accent,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: AppSizes.paddingS),
+            Text(AppStrings.newTrip, style: AppTypography.headlineSmall),
+          ],
+        ),
+        const SizedBox(height: AppSizes.paddingXS),
+        Text(
+          'メンバーの希望を集めて旅を計画',
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+
+        // 旅行タイトル入力
+        TextField(
+          controller: _titleController,
+          decoration: InputDecoration(
+            labelText: AppStrings.tripTitle,
+            hintText: AppStrings.tripTitleHint,
+            prefixIcon: Icon(
+              Icons.edit_outlined,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _goToStepTwo(),
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+
+        // 日程オプション
+        InkWell(
+          onTap: () {
+            setState(() {
+              _isDateUndecided = !_isDateUndecided;
+              if (_isDateUndecided) _dateRange = null;
+            });
+          },
+          borderRadius: BorderRadius.circular(AppSizes.radiusM),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              vertical: AppSizes.paddingS,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color:
+                        _isDateUndecided
+                            ? AppColors.accent
+                            : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color:
+                          _isDateUndecided
+                              ? AppColors.accent
+                              : AppColors.border,
+                      width: 2,
+                    ),
+                  ),
+                  child:
+                      _isDateUndecided
+                          ? const Icon(
+                            Icons.check_rounded,
+                            size: 16,
+                            color: Colors.white,
+                          )
+                          : null,
+                ),
+                const SizedBox(width: AppSizes.paddingM),
+                Text(
+                  AppStrings.tripDateUndecided,
+                  style: AppTypography.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // 日程選択
+        if (!_isDateUndecided) ...[
+          const SizedBox(height: AppSizes.paddingS),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final range = await showDateRangePicker(
+                context: context,
+                firstDate: DateTime.now(),
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+                saveText: '決定',
+                initialEntryMode: DatePickerEntryMode.calendarOnly,
+              );
+              if (range != null) {
+                setState(() => _dateRange = range);
+              }
+            },
+            icon: const Icon(Icons.calendar_today_outlined),
+            label: Text(
+              _dateRange != null
+                  ? '${_dateRange!.start.month}/${_dateRange!.start.day} - ${_dateRange!.end.month}/${_dateRange!.end.day}'
+                  : '日程を選択',
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: AppSizes.paddingL),
+
+        // 次へボタン
+        ElevatedButton(
+          onPressed: () => _goToStepTwo(),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.accent,
+            minimumSize: const Size.fromHeight(52),
+          ),
+          child: Text(
+            '次へ',
+            style: AppTypography.button.copyWith(color: Colors.white),
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+      ],
+    );
+  }
+
+  /// ステップ2: あなたの情報（名前・出発地点）
+  Widget _buildStepTwo({Key? key}) {
+    return Column(
+      key: key,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // ヘッダー（戻るボタン付き）
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                setState(() => _currentStep = 0);
+              },
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.border.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                ),
+                child: Icon(
+                  Icons.arrow_back_rounded,
+                  color: AppColors.textSecondary,
+                  size: 20,
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSizes.paddingS),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'あなたのことを教えてください',
+                    style: AppTypography.headlineSmall,
+                  ),
+                  Text(
+                    'メンバーに表示される情報です',
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+
+        // 名前入力
+        TextField(
+          controller: _nameController,
+          decoration: InputDecoration(
+            labelText: 'ニックネーム',
+            hintText: '例: たろう',
+            prefixIcon: Icon(
+              Icons.person_outline,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          textCapitalization: TextCapitalization.words,
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _departureFocus.requestFocus(),
+          autofocus: true,
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+
+        // 出発地点入力
+        TextField(
+          controller: _departureController,
+          focusNode: _departureFocus,
+          decoration: InputDecoration(
+            labelText: '出発地点',
+            hintText: '例: 東京駅、新宿など',
+            prefixIcon: Icon(
+              Icons.location_on_outlined,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _createTrip(),
+        ),
+        const SizedBox(height: AppSizes.paddingXS),
+        Text(
+          '※ AIが交通費や移動時間を考慮したプランを作成します',
+          style: AppTypography.caption.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+
+        const SizedBox(height: AppSizes.paddingL),
+
+        // 旅を始めるボタン
+        ElevatedButton(
+          onPressed: _isLoading ? null : () => _createTrip(),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.accent,
+            minimumSize: const Size.fromHeight(52),
+          ),
+          child:
+              _isLoading
+                  ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                  : Text(
+                    '旅を始める',
+                    style: AppTypography.button.copyWith(
+                      color: Colors.white,
+                    ),
+                  ),
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+      ],
+    );
+  }
+
+  /// 成功表示
+  Widget _buildSuccessState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSizes.paddingXL),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SuccessCheckAnimation(size: 64),
+          const SizedBox(height: AppSizes.paddingM),
+          Text(
+            '旅を作成しました!',
+            style: AppTypography.titleMedium,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _goToStepTwo() {
+    HapticFeedback.lightImpact();
+    setState(() => _currentStep = 1);
+  }
+
+  /// ユーザー情報を保存（name_input_dialog.dart と同じパターン）
+  void _saveUserInfo(String name, String? departure) {
+    ref.read(guestSessionProvider.notifier).setUserInfo(
+      name: name,
+      departurePoint: departure,
+    );
+
+    final isGuest = ref.read(isGuestModeProvider);
+    final isAuthenticated = ref.read(isAuthenticatedProvider);
+    if (isGuest && !isAuthenticated) {
+      final userId = ref.read(currentUserIdProvider);
+      if (userId != null) {
+        final localProfile = ref.read(localProfileProvider);
+        if (localProfile != null) {
+          ref
+              .read(localProfileProvider.notifier)
+              .updateProfile(displayName: name);
+        } else {
+          final now = DateTime.now();
+          ref
+              .read(localProfileProvider.notifier)
+              .setProfile(
+                UserProfileModel(
+                  userId: userId,
+                  displayName: name,
+                  createdAt: now,
+                  updatedAt: now,
+                ),
+              );
+        }
+      }
+    }
+  }
+
+  Future<void> _createTrip() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('名前を入力してください'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSizes.radiusM),
+          ),
+        ),
+      );
+      return;
+    }
+
     var title = _titleController.text.trim();
-    // タイトル未入力の場合はデフォルト値を使用
     if (title.isEmpty) {
       title = '新しい旅';
     }
 
-    String ownerName = '';
-    String? ownerDeparture;
-
-    if (!skipUserInfo) {
-      // ユーザー情報を確認・収集（手動作成時など）
-      // 毎回確認することで、旅ごとに出発地などを変更できるようにする
-      final userInfo = await collectUserInfo(context, ref, forceShow: true);
-      if (userInfo == null) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-      ownerName = userInfo.name;
-      ownerDeparture = userInfo.departurePoint;
-    } else {
-      // 自動作成時は、既存の名前があれば使い、なければ空（Lobbyで入力させる）
-      final existingName = ref.read(guestNameProvider);
-      ownerName = existingName ?? '';
-      // 出発地点は未設定のまま
-    }
+    final departure = _departureController.text.trim();
+    _saveUserInfo(name, departure.isNotEmpty ? departure : null);
 
     setState(() => _isLoading = true);
 
@@ -1700,19 +2016,23 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
             title: title,
             startDate: _dateRange?.start,
             endDate: _dateRange?.end,
-            ownerName: ownerName,
-            ownerDeparture: ownerDeparture,
+            ownerName: name,
+            ownerDeparture: departure.isNotEmpty ? departure : null,
           );
 
       if (mounted) {
         if (tripId != null) {
-          Navigator.of(context).pop();
-          // メンバー待機画面へ直接遷移
-          if (context.mounted) {
-            context.go('/trip/$tripId/lobby');
+          // 成功アニメーション表示
+          setState(() => _showSuccess = true);
+          HapticFeedback.mediumImpact();
+          await Future.delayed(const Duration(milliseconds: 600));
+          if (mounted) {
+            Navigator.of(context).pop();
+            if (context.mounted) {
+              context.go('/trip/$tripId/lobby');
+            }
           }
         } else {
-          // エラー時はメッセージを表示
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: const Text('旅行の作成に失敗しました'),

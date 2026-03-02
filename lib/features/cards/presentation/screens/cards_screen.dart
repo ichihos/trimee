@@ -680,9 +680,16 @@ class _CardItemState extends ConsumerState<_CardItem>
 
   /// 投稿者名を取得
   String _getCreatorName(WidgetRef ref) {
+    if (widget.card.anonymous) return '匿名';
     final currentUserId = ref.watch(currentUserIdProvider);
     if (widget.card.createdBy == currentUserId) {
       return 'あなた';
+    }
+    // trip.memberDetailsから投稿者名を取得
+    final trip = ref.watch(tripDetailProvider(widget.tripId)).valueOrNull;
+    final member = trip?.memberDetails[widget.card.createdBy];
+    if (member != null && member.displayName.isNotEmpty) {
+      return member.displayName;
     }
     return 'メンバー';
   }
@@ -999,7 +1006,23 @@ class _GeneratePlanFAB extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(AppSizes.radiusL),
                 ),
                 title: Text('AIプラン生成を開始', style: AppTypography.titleMedium),
-                content: Text('メンバー全員が移動します', style: AppTypography.bodyMedium),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AIがメンバーの希望をもとに旅行プランを生成します。メンバー全員がプラン画面に移動します。',
+                      style: AppTypography.bodyMedium,
+                    ),
+                    const SizedBox(height: AppSizes.paddingS),
+                    Text(
+                      '※ カードの追加・編集はプラン生成後もできます。',
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx, false),
@@ -1071,6 +1094,7 @@ class _InviteSheet extends ConsumerWidget {
   ) async {
     final nameController = TextEditingController();
     final departureController = TextEditingController();
+    final departureFocus = FocusNode();
 
     final result = await showDialog<Map<String, String>>(
       context: context,
@@ -1107,15 +1131,28 @@ class _InviteSheet extends ConsumerWidget {
                       prefixIcon: Icon(Icons.person_outline),
                     ),
                     autofocus: true,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => departureFocus.requestFocus(),
                   ),
                   const SizedBox(height: AppSizes.paddingM),
                   TextField(
                     controller: departureController,
+                    focusNode: departureFocus,
                     decoration: const InputDecoration(
                       labelText: '出発地点（任意）',
                       hintText: '例: 東京駅',
                       prefixIcon: Icon(Icons.location_on_outlined),
                     ),
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) {
+                      final name = nameController.text.trim();
+                      if (name.isEmpty) return;
+                      Navigator.pop(dialogContext, {
+                        'name': name,
+                        'departure': departureController.text.trim(),
+                      });
+                    },
                   ),
                   const SizedBox(height: AppSizes.paddingL),
                   Row(
@@ -1158,6 +1195,10 @@ class _InviteSheet extends ConsumerWidget {
             ),
           ),
     );
+
+    nameController.dispose();
+    departureController.dispose();
+    departureFocus.dispose();
 
     if (result != null) {
       final personalLinkId = _uuid.v4().substring(0, 8);

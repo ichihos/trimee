@@ -5,14 +5,19 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/models/plan_model.dart';
+import '../../../../shared/models/trip_member_model.dart';
 import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/services/ai_service.dart';
+import '../../../../shared/services/plan_export_service.dart';
+import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../../shared/widgets/app_card.dart';
 import '../../../../shared/widgets/app_icon.dart';
+import '../../../trip/presentation/providers/trip_provider.dart';
 import '../providers/plan_provider.dart';
 import '../widgets/placeholder_action_sheet.dart';
 import '../widgets/plan_map_view.dart';
@@ -41,6 +46,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
   DateTime _currentTime = DateTime.now();
   int _currentDay = 1;
   bool _isMapView = false;
+  final GlobalKey _exportKey = GlobalKey();
 
   @override
   void initState() {
@@ -98,7 +104,9 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: CustomScrollView(
+      body: RepaintBoundary(
+        key: _exportKey,
+        child: CustomScrollView(
         slivers: [
           // ヘッダー
           SliverAppBar(
@@ -204,6 +212,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
             const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
           ],
         ],
+      ),
       ),
       // フローティング編集ボタン
       floatingActionButton:

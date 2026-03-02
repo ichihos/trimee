@@ -22,14 +22,21 @@ class SignInScreen extends ConsumerStatefulWidget {
 class _SignInScreenState extends ConsumerState<SignInScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _isSignUp = false;
   final _nameController = TextEditingController();
+  bool _isSignUp = false;
+
+  final _nameFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _nameFocus.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -48,8 +55,11 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
           onPressed: () => context.go('/welcome'),
         ),
       ),
-      body: SafeArea(
-        child: Center(
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        behavior: HitTestBehavior.opaque,
+        child: SafeArea(
+          child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(AppSizes.paddingXL),
             child: ConstrainedBox(
@@ -80,6 +90,10 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                   if (_isSignUp) ...[
                     TextField(
                       controller: _nameController,
+                      focusNode: _nameFocus,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      onSubmitted: (_) => _emailFocus.requestFocus(),
                       decoration: const InputDecoration(
                         labelText: '名前',
                         hintText: 'あなたの名前',
@@ -91,7 +105,10 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                   // メール入力
                   TextField(
                     controller: _emailController,
+                    focusNode: _emailFocus,
                     keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => _passwordFocus.requestFocus(),
                     decoration: const InputDecoration(
                       labelText: AppStrings.email,
                       hintText: 'example@email.com',
@@ -102,7 +119,10 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                   // パスワード入力
                   TextField(
                     controller: _passwordController,
+                    focusNode: _passwordFocus,
                     obscureText: true,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _handleEmailAuth(),
                     decoration: const InputDecoration(
                       labelText: AppStrings.password,
                       hintText: '••••••••',
@@ -175,6 +195,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
               ),
             ),
           ),
+        ),
         ),
       ),
     );

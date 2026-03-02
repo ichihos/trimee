@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lottie/lottie.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:trimee/core/constants/app_colors.dart';
 import 'package:trimee/core/constants/app_sizes.dart';
@@ -34,7 +36,26 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   bool _showCard = true;
   int _currentStep = 0;
   Timer? _animationTimer;
-  String _currentTransitEmoji = '🚗';
+  String _currentTransitLabel = '車';
+
+  // 地図上の乗り物アノテーション
+  PointAnnotationManager? _vehicleAnnotationManager;
+  PointAnnotation? _vehicleAnnotation;
+  Timer? _vehicleMovementTimer;
+  final Map<String, Uint8List> _vehicleIconCache = {};
+
+  // スポット到着時Lottieオーバーレイ
+  bool _showSpotLottie = false;
+  double _spotLottieX = 0;
+  double _spotLottieY = 0;
+  String _spotLottieAsset = '';
+
+  // 日程トランジション
+  bool _showDayTransition = false;
+  int _dayTransitionDay = 1;
+
+  // 旅のサマリー（アウトロ用）
+  double _totalDistanceKm = 0;
 
   bool _isRecording = false;
   bool _isExportAvailable = false;
@@ -130,6 +151,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   @override
   void dispose() {
     _animationTimer?.cancel();
+    _vehicleMovementTimer?.cancel();
     _introController.dispose();
     _cardController.dispose();
     _outroController.dispose();
@@ -155,6 +177,93 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     );
 
     _drawRoute();
+    _initVehicleManager();
+  }
+
+  Future<void> _initVehicleManager() async {
+    _vehicleAnnotationManager =
+        await _mapboxMap!.annotations.createPointAnnotationManager();
+  }
+
+  Future<void> _startVehicleAnimation(
+    PlanItem from,
+    PlanItem to,
+    int durationMs,
+  ) async {
+    if (_vehicleAnnotationManager == null) return;
+
+    // アイコンPNGを取得/キャッシュ
+    final data = _vehicleIconData(from, to);
+    final cacheKey = '${data.icon.codePoint}';
+    if (!_vehicleIconCache.containsKey(cacheKey)) {
+      _vehicleIconCache[cacheKey] = await _renderVehicleIcon(
+        data.icon,
+        data.color,
+      );
+    }
+    final iconBytes = _vehicleIconCache[cacheKey]!;
+
+    final fromPos = Position(from.longitude!, from.latitude!);
+    final toPos = Position(to.longitude!, to.latitude!);
+    final initialBearing = _bearingBetween(fromPos, toPos);
+
+    // 出発地点にアノテーション作成
+    _vehicleAnnotation = await _vehicleAnnotationManager!.create(
+      PointAnnotationOptions(
+        geometry: Point(coordinates: fromPos),
+        image: iconBytes,
+        iconSize: 0.5,
+        iconRotate: initialBearing,
+        iconAnchor: IconAnchor.CENTER,
+      ),
+    );
+
+    // 移動タイマー開始（~30fps）
+    final stopwatch = Stopwatch()..start();
+    _vehicleMovementTimer?.cancel();
+    _vehicleMovementTimer = Timer.periodic(const Duration(milliseconds: 33), (
+      timer,
+    ) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final elapsed = stopwatch.elapsedMilliseconds;
+      final t = (elapsed / durationMs).clamp(0.0, 1.0);
+
+      if (t >= 1.0) {
+        timer.cancel();
+        return;
+      }
+
+      final easedT = _easeInOutCubic(t);
+      final currentPos = _interpolatePosition(fromPos, toPos, easedT);
+
+      // 少し先の位置からベアリング計算
+      final lookAheadT = (t + 0.03).clamp(0.0, 1.0);
+      final lookAheadPos = _interpolatePosition(fromPos, toPos, lookAheadT);
+      final bearing = _bearingBetween(currentPos, lookAheadPos);
+
+      _vehicleAnnotation!.geometry = Point(coordinates: currentPos);
+      _vehicleAnnotation!.iconRotate = bearing;
+
+      try {
+        await _vehicleAnnotationManager!.update(_vehicleAnnotation!);
+      } catch (_) {
+        timer.cancel();
+      }
+    });
+  }
+
+  Future<void> _removeVehicleAnnotation() async {
+    _vehicleMovementTimer?.cancel();
+    _vehicleMovementTimer = null;
+    if (_vehicleAnnotation != null && _vehicleAnnotationManager != null) {
+      try {
+        await _vehicleAnnotationManager!.delete(_vehicleAnnotation!);
+      } catch (_) {}
+      _vehicleAnnotation = null;
+    }
   }
 
   Future<void> _drawRoute() async {
@@ -240,24 +349,41 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   void _play() {
     if (_mapboxMap == null || _validItems.isEmpty) return;
     HapticFeedback.mediumImpact();
+
+    // 総距離を計算（アウトロ用）
+    double totalDist = 0;
+    for (var i = 1; i < _validItems.length; i++) {
+      totalDist += _haversineDistance(_validItems[i - 1], _validItems[i]);
+    }
+
     setState(() {
       _showIntro = false;
       _showOutro = false;
       _isTransiting = false;
       _isPlaying = true;
+      _totalDistanceKm = totalDist;
     });
-    _animateToStep(_currentStep);
+
+    // ルート俯瞰 → 1800ms後に最初のスポットへ
+    _fitToBounds();
+    _animationTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted && _isPlaying) {
+        _animateToStep(_currentStep);
+      }
+    });
   }
 
   void _pause() {
     HapticFeedback.lightImpact();
     _animationTimer?.cancel();
+    _vehicleMovementTimer?.cancel();
     setState(() => _isPlaying = false);
   }
 
   void _skipTo(int step) {
     if (step < 0 || step >= _validItems.length) return;
     _animationTimer?.cancel();
+    _removeVehicleAnnotation();
     HapticFeedback.selectionClick();
 
     setState(() {
@@ -265,6 +391,8 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
       _showOutro = false;
       _isTransiting = false;
       _showCard = true;
+      _showSpotLottie = false;
+      _showDayTransition = false;
     });
 
     if (_isPlaying) {
@@ -302,13 +430,11 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
       HapticFeedback.mediumImpact();
 
       if (_isRecording) {
-        // 録画中: アウトロ表示後に停止 → 全体表示
         Future.delayed(const Duration(seconds: 1), () async {
           if (mounted) await _stopExportAndSave();
           if (mounted) _fitToBounds();
         });
       } else {
-        // 通常再生: アウトロ表示後に全体表示
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) _fitToBounds();
         });
@@ -318,59 +444,93 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
 
     final item = _validItems[step];
     final isFirst = step == 0;
-    final cameraDuration = isFirst ? 2500 : 3000;
+    final PlanItem? prevItem = isFirst ? null : _validItems[step - 1];
 
     setState(() {
       _currentStep = step;
       _showCard = false;
+      _showSpotLottie = false;
     });
 
-    // 最初のスポット以外はトランジットオーバーレイを表示
-    if (!isFirst) {
-      final from = _validItems[step - 1];
+    // 日程が変わった場合 → Day トランジション演出
+    if (!isFirst && prevItem != null && item.day != prevItem.day) {
+      setState(() {
+        _showDayTransition = true;
+        _dayTransitionDay = item.day;
+      });
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (!mounted || !_isPlaying) return;
+      setState(() => _showDayTransition = false);
+    }
+
+    // カメラ設定（距離に応じてズーム・ピッチを変える）
+    final camera = _cameraForTransit(prevItem, item);
+    final cameraDuration = isFirst ? 2500 : 3000;
+
+    // 最初のスポット以外は地図上に乗り物アイコンを表示して移動
+    if (!isFirst && prevItem != null) {
+      final travelTime = _estimatedTravelTime(prevItem, item);
       setState(() {
         _isTransiting = true;
-        _currentTransitEmoji = _transitEmoji(from, item);
+        _currentTransitLabel = '${_transitLabel(prevItem, item)} $travelTime';
       });
       _transitController.duration = Duration(milliseconds: cameraDuration);
       _transitController.forward(from: 0);
+      _startVehicleAnimation(prevItem, item, cameraDuration);
     }
 
     await _mapboxMap!.flyTo(
       CameraOptions(
         center: Point(coordinates: Position(item.longitude!, item.latitude!)),
-        zoom: isFirst ? 14.5 : 15.5,
-        pitch: isFirst ? 45.0 : 55.0,
-        bearing:
-            step > 0 ? _calculateBearing(_validItems[step - 1], item) : 0.0,
+        zoom: camera.zoom,
+        pitch: camera.pitch,
+        bearing: prevItem != null ? _calculateBearing(prevItem, item) : 0.0,
       ),
       MapAnimationOptions(duration: cameraDuration, startDelay: 0),
     );
 
     HapticFeedback.selectionClick();
 
-    // カメラ移動完了後にトランジット非表示 → カード表示 → 閲覧時間後に次へ
-    _animationTimer = Timer(
-      Duration(milliseconds: cameraDuration),
-      () {
+    // カメラ到着後 → 乗り物削除 → Lottie → 間 → カード → 閲覧 → 次へ
+    _animationTimer = Timer(Duration(milliseconds: cameraDuration), () async {
+      if (!mounted) return;
+      await _removeVehicleAnnotation();
+
+      // 1) スポット到着Lottieを表示（カードはまだ出さない）
+      if (_mapboxMap != null) {
+        try {
+          final screenCoord = await _mapboxMap!.pixelForCoordinate(
+            Point(coordinates: Position(item.longitude!, item.latitude!)),
+          );
+          if (mounted) {
+            setState(() {
+              _showSpotLottie = true;
+              _spotLottieX = screenCoord.x;
+              _spotLottieY = screenCoord.y;
+              _spotLottieAsset = _spotLottieAssetFor(item.location);
+            });
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      setState(() => _isTransiting = false);
+
+      // 2) 600msの「間」でLottieを味わう
+      _animationTimer = Timer(const Duration(milliseconds: 600), () {
         if (!mounted) return;
-        setState(() {
-          _isTransiting = false;
-          _showCard = true;
-        });
+        // 3) カード表示（stagger animation）
+        setState(() => _showCard = true);
         _cardController.forward(from: 0);
 
-        // カード閲覧時間(1500ms)後に次のステップへ
-        _animationTimer = Timer(
-          const Duration(milliseconds: 1500),
-          () {
-            if (mounted && _isPlaying) {
-              _animateToStep(step + 1);
-            }
-          },
-        );
-      },
-    );
+        // 4) 2500ms閲覧後、次のステップへ
+        _animationTimer = Timer(const Duration(milliseconds: 2500), () {
+          if (mounted && _isPlaying) {
+            _animateToStep(step + 1);
+          }
+        });
+      });
+    });
   }
 
   double _calculateBearing(PlanItem from, PlanItem to) {
@@ -494,7 +654,10 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
               top: topPadding + 16,
               right: 16,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.red.withValues(alpha: 0.8),
                   borderRadius: BorderRadius.circular(12),
@@ -502,7 +665,11 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.fiber_manual_record, color: Colors.white, size: 10),
+                    Icon(
+                      Icons.fiber_manual_record,
+                      color: Colors.white,
+                      size: 10,
+                    ),
                     SizedBox(width: 4),
                     Text(
                       'REC',
@@ -544,16 +711,40 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
               onExport: _isExportAvailable ? _startExport : null,
             ),
 
-          // トランジットオーバーレイ（スポット間移動中）
+          // トランジット情報ピル（スポット間移動中 - 上部に小さく表示）
           if (_isTransiting)
-            _TransitOverlay(
+            _TransitInfoPill(
               controller: _transitController,
-              emoji: _currentTransitEmoji,
+              transitLabel: _currentTransitLabel,
               toName: _validItems[_currentStep].location,
+              topPadding: topPadding,
+            ),
+
+          // 日程トランジションオーバーレイ
+          if (_showDayTransition) _DayTransitionOverlay(day: _dayTransitionDay),
+
+          // スポット到着Lottieオーバーレイ（地図上のスポット位置に表示）
+          if (_showSpotLottie && _spotLottieAsset.isNotEmpty)
+            Positioned(
+              left: _spotLottieX - 50,
+              top: _spotLottieY - 80,
+              width: 100,
+              height: 100,
+              child: IgnorePointer(
+                child: Lottie.asset(
+                  _spotLottieAsset,
+                  fit: BoxFit.contain,
+                  repeat: false,
+                ),
+              ),
             ),
 
           // スポットカード（再生中 or 停止中で選択スポットあり）
-          if (!_showIntro && !_showOutro && !_isTransiting && _showCard && _validItems.isNotEmpty)
+          if (!_showIntro &&
+              !_showOutro &&
+              !_isTransiting &&
+              _showCard &&
+              _validItems.isNotEmpty)
             Positioned(
               bottom: bottomPadding + 100,
               left: 16,
@@ -572,6 +763,12 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
             _OutroOverlay(
               controller: _outroController,
               title: widget.planTitle ?? '旅の軌跡',
+              spotCount: _validItems.length,
+              dayCount:
+                  _validItems.isEmpty
+                      ? 0
+                      : _validItems.map((i) => i.day).toSet().length,
+              totalDistanceKm: _totalDistanceKm,
               onReplay: () {
                 setState(() {
                   _showOutro = false;
@@ -813,39 +1010,10 @@ class _IntroOverlay extends StatelessWidget {
 
               const Spacer(flex: 1),
 
-              // 再生ボタン
+              // 再生ボタン（パルスグロー付き）
               FadeTransition(
                 opacity: buttonFade,
-                child: GestureDetector(
-                  onTap: onPlay,
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [
-                          AppColors.accent,
-                          AppColors.accent.withValues(alpha: 0.8),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.accent.withValues(alpha: 0.4),
-                          blurRadius: 24,
-                          spreadRadius: 4,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 36,
-                    ),
-                  ),
-                ),
+                child: _PulsePlayButton(onTap: onPlay),
               ),
 
               const SizedBox(height: 12),
@@ -934,7 +1102,7 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-/// アニメーション付きスポットカード
+/// アニメーション付きスポットカード（スタガードアニメーション + フロスト効果）
 class _AnimatedSpotCard extends StatelessWidget {
   const _AnimatedSpotCard({
     super.key,
@@ -951,149 +1119,212 @@ class _AnimatedSpotCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fade = CurvedAnimation(
-      parent: controller,
-      curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
-    );
+    // 全体のスライドイン
     final slide = Tween<Offset>(
       begin: const Offset(0, 0.3),
       end: Offset.zero,
     ).animate(
       CurvedAnimation(
         parent: controller,
-        curve: const Interval(0.1, 0.7, curve: Curves.easeOutCubic),
+        curve: const Interval(0.0, 0.5, curve: Curves.easeOutCubic),
       ),
+    );
+    final cardFade = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+    );
+
+    // スタガード: 上段（日程バッジ + 時間）
+    final topRowFade = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+    );
+    // スタガード: メイン（スポットアイコン + 名前）
+    final mainFade = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.15, 0.55, curve: Curves.easeOut),
+    );
+    final mainSlide = Tween<Offset>(
+      begin: const Offset(-0.1, 0),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: controller,
+        curve: const Interval(0.15, 0.55, curve: Curves.easeOutCubic),
+      ),
+    );
+    // スタガード: 下段（ノート + 滞在時間）
+    final detailFade = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.3, 0.7, curve: Curves.easeOut),
     );
 
     return FadeTransition(
-      opacity: fade,
+      opacity: cardFade,
       child: SlideTransition(
         position: slide,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.75),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 24,
-                spreadRadius: 2,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 上段: 日程・時間・番号
-              Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
+                  // 上段: 日程・時間・番号（stagger 1）
+                  FadeTransition(
+                    opacity: topRowFade,
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                AppColors.accent,
+                                AppColors.accent.withValues(alpha: 0.7),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${item.day}日目',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          item.time,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.8),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${stepIndex + 1} / $totalSteps',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.4),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          AppColors.accent,
-                          AppColors.accent.withValues(alpha: 0.7),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // スポット名（stagger 2 - スライド付き）
+                  FadeTransition(
+                    opacity: mainFade,
+                    child: SlideTransition(
+                      position: mainSlide,
+                      child: Builder(
+                        builder: (context) {
+                          final spot = _spotIcon(item.location);
+                          return Row(
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: spot.color.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  spot.icon,
+                                  color: spot.color,
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  item.location,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+
+                  // 下段（stagger 3）
+                  FadeTransition(
+                    opacity: detailFade,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ノート（あれば）
+                        if (item.notes != null && item.notes!.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            item.notes!,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontSize: 13,
+                              height: 1.3,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ],
-                      ),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      '${item.day}日目',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    item.time,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.8),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${stepIndex + 1} / $totalSteps',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.4),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                        // 滞在時間
+                        if (item.durationMinutes > 0) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.schedule_rounded,
+                                size: 13,
+                                color: Colors.white.withValues(alpha: 0.4),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${item.durationMinutes}分',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-
-              // スポット名（タイプ絵文字付き）
-              Row(
-                children: [
-                  Text(
-                    _spotEmoji(item.location),
-                    style: const TextStyle(fontSize: 22),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      item.location,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        height: 1.2,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              // ノート（あれば）
-              if (item.notes != null && item.notes!.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  item.notes!,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.7),
-                    fontSize: 13,
-                    height: 1.3,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-
-              // 滞在時間
-              if (item.durationMinutes > 0) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.schedule_rounded,
-                      size: 13,
-                      color: Colors.white.withValues(alpha: 0.4),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${item.durationMinutes}分',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.4),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
@@ -1101,23 +1332,39 @@ class _AnimatedSpotCard extends StatelessWidget {
   }
 }
 
-/// アウトロオーバーレイ
+/// アウトロオーバーレイ（旅のサマリー付き）
 class _OutroOverlay extends StatelessWidget {
   const _OutroOverlay({
     required this.controller,
     required this.title,
+    required this.spotCount,
+    required this.dayCount,
+    required this.totalDistanceKm,
     required this.onReplay,
     required this.onClose,
   });
 
   final AnimationController controller;
   final String title;
+  final int spotCount;
+  final int dayCount;
+  final double totalDistanceKm;
   final VoidCallback onReplay;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final fade = CurvedAnimation(parent: controller, curve: Curves.easeOut);
+    final statsFade = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.3, 0.8, curve: Curves.easeOut),
+    );
+
+    // 距離の表示フォーマット
+    final distanceLabel =
+        totalDistanceKm >= 10
+            ? '${totalDistanceKm.round()}km'
+            : '${totalDistanceKm.toStringAsFixed(1)}km';
 
     return Positioned.fill(
       child: FadeTransition(
@@ -1162,6 +1409,35 @@ class _OutroOverlay extends StatelessWidget {
                     fontSize: 14,
                   ),
                 ),
+                const SizedBox(height: 20),
+
+                // 旅のサマリー統計
+                FadeTransition(
+                  opacity: statsFade,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _StatChip(
+                        icon: Icons.place_rounded,
+                        label: '$spotCountスポット',
+                      ),
+                      const SizedBox(width: 12),
+                      if (dayCount > 0) ...[
+                        _StatChip(
+                          icon: Icons.calendar_today_rounded,
+                          label: '$dayCount日間',
+                        ),
+                        const SizedBox(width: 12),
+                      ],
+                      if (totalDistanceKm > 0)
+                        _StatChip(
+                          icon: Icons.straighten_rounded,
+                          label: distanceLabel,
+                        ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: 32),
 
                 // ボタン群
@@ -1255,115 +1531,345 @@ class _OutroOverlay extends StatelessWidget {
   }
 }
 
-/// トランジットオーバーレイ（スポット間移動中）
-class _TransitOverlay extends StatelessWidget {
-  const _TransitOverlay({
-    required this.controller,
-    required this.emoji,
-    required this.toName,
-  });
+/// 統計チップ（アウトロ用）
+class _StatChip extends StatelessWidget {
+  const _StatChip({required this.icon, required this.label});
 
-  final AnimationController controller;
-  final String emoji;
-  final String toName;
+  final IconData icon;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    // フェードイン（widget自体は _isTransiting=false で消えるのでフェードアウト不要）
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: AppColors.accent, size: 14),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.8),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 日程トランジションオーバーレイ（Day切り替え演出 - アニメーション付き）
+class _DayTransitionOverlay extends StatefulWidget {
+  const _DayTransitionOverlay({required this.day});
+
+  final int day;
+
+  @override
+  State<_DayTransitionOverlay> createState() => _DayTransitionOverlayState();
+}
+
+class _DayTransitionOverlayState extends State<_DayTransitionOverlay>
+    with TickerProviderStateMixin {
+  late AnimationController _fadeController;
+  late AnimationController _lineController;
+  late Animation<double> _fadeIn;
+  late Animation<double> _scale;
+  late Animation<double> _lineWidth;
+  late Animation<double> _subtitleFade;
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _lineController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+
+    _fadeIn = CurvedAnimation(
+      parent: _fadeController,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    );
+    _scale = Tween<double>(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _fadeController,
+        curve: const Interval(0.0, 0.6, curve: Curves.easeOutCubic),
+      ),
+    );
+    _subtitleFade = CurvedAnimation(
+      parent: _fadeController,
+      curve: const Interval(0.4, 1.0, curve: Curves.easeOut),
+    );
+    _lineWidth = Tween<double>(begin: 0.0, end: 48.0).animate(
+      CurvedAnimation(parent: _lineController, curve: Curves.easeOutCubic),
+    );
+
+    _fadeController.forward();
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) _lineController.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _fadeController.dispose();
+    _lineController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: FadeTransition(
+        opacity: _fadeIn,
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.6),
+          child: Center(
+            child: ScaleTransition(
+              scale: _scale,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Day ${widget.day}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 48,
+                      fontWeight: FontWeight.w300,
+                      letterSpacing: 8,
+                      height: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  AnimatedBuilder(
+                    animation: _lineWidth,
+                    builder: (context, child) {
+                      return Container(
+                        width: _lineWidth.value,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: AppColors.accent,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  FadeTransition(
+                    opacity: _subtitleFade,
+                    child: Text(
+                      '${widget.day}日目',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// トランジット情報ピル（上部に小さく表示 - 地図上のvehicleアニメーションを遮らない）
+class _TransitInfoPill extends StatelessWidget {
+  const _TransitInfoPill({
+    required this.controller,
+    required this.transitLabel,
+    required this.toName,
+    required this.topPadding,
+  });
+
+  final AnimationController controller;
+  final String transitLabel; // 例: "車 約5分"
+  final String toName;
+  final double topPadding;
+
+  @override
+  Widget build(BuildContext context) {
     final opacity = CurvedAnimation(
       parent: controller,
       curve: const Interval(0.0, 0.3, curve: Curves.easeOut),
     );
 
-    final bounce = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(
-        parent: controller,
-        curve: const Interval(0.0, 1.0, curve: Curves.linear),
-      ),
-    );
-
-    return Positioned.fill(
+    return Positioned(
+      top: topPadding + 56,
+      left: 0,
+      right: 0,
       child: FadeTransition(
         opacity: opacity,
         child: Center(
-          child: AnimatedBuilder(
-            animation: bounce,
-            builder: (context, child) {
-              final yOffset = math.sin(bounce.value * math.pi * 3) * 8;
-              return Transform.translate(
-                offset: Offset(0, yOffset),
-                child: child,
-              );
-            },
-            child: Column(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 12,
+                ),
+              ],
+            ),
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 乗り物絵文字（グロー付き）
                 Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.15),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.accent.withValues(alpha: 0.3),
-                        blurRadius: 24,
-                        spreadRadius: 4,
-                      ),
-                    ],
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
                   ),
-                  child: Center(
-                    child: Text(
-                      emoji,
-                      style: const TextStyle(fontSize: 36),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    transitLabel,
+                    style: TextStyle(
+                      color: AppColors.accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                // 行き先テキスト
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.1),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_rounded,
+                  color: Colors.white.withValues(alpha: 0.5),
+                  size: 14,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    toName,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
                     ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.arrow_forward_rounded,
-                        color: AppColors.accent,
-                        size: 14,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          toName,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.85),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// パルスグロー付き再生ボタン（イントロ用）
+class _PulsePlayButton extends StatefulWidget {
+  const _PulsePlayButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  State<_PulsePlayButton> createState() => _PulsePlayButtonState();
+}
+
+class _PulsePlayButtonState extends State<_PulsePlayButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 2000),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: SizedBox(
+        width: 96,
+        height: 96,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // パルスリング
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, child) {
+                final scale = 1.0 + (_pulseController.value * 0.25);
+                final opacity = 0.4 - (_pulseController.value * 0.35);
+                return Transform.scale(
+                  scale: scale,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: AppColors.accent.withValues(
+                          alpha: opacity.clamp(0.0, 1.0),
+                        ),
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            // メインボタン
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.accent,
+                    AppColors.accent.withValues(alpha: 0.8),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.accent.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    spreadRadius: 4,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 36,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1448,21 +1954,46 @@ class _ControlBar extends StatelessWidget {
   }
 }
 
-/// スポット名からタイプ絵文字を推定
-String _spotEmoji(String location) {
+/// スポット名からタイプアイコン情報を推定
+({IconData icon, Color color}) _spotIcon(String location) {
   final l = location.toLowerCase();
-  if (RegExp(r'神社|寺|temple|shrine').hasMatch(l)) return '⛩️';
-  if (RegExp(r'城|castle').hasMatch(l)) return '🏯';
-  if (RegExp(r'公園|山|自然|garden|park|森|滝|湖').hasMatch(l)) return '🌲';
-  if (RegExp(r'海|ビーチ|beach|港').hasMatch(l)) return '🏖️';
-  if (RegExp(r'レストラン|カフェ|食|グルメ|cafe|restaurant|ラーメン|寿司|焼').hasMatch(l)) return '🍽️';
-  if (RegExp(r'ホテル|旅館|inn|hotel|宿').hasMatch(l)) return '🏨';
-  if (RegExp(r'駅|station').hasMatch(l)) return '🚉';
-  if (RegExp(r'空港|airport').hasMatch(l)) return '✈️';
-  if (RegExp(r'美術館|博物館|museum|水族館|動物園').hasMatch(l)) return '🏛️';
-  if (RegExp(r'温泉|spa|風呂').hasMatch(l)) return '♨️';
-  if (RegExp(r'買|ショッピング|モール|shop|market|商店').hasMatch(l)) return '🛍️';
-  return '📍';
+  if (RegExp(r'神社|寺|temple|shrine').hasMatch(l)) {
+    return (
+      icon: Icons.temple_buddhist_rounded,
+      color: const Color(0xFFE57373),
+    );
+  }
+  if (RegExp(r'城|castle').hasMatch(l)) {
+    return (icon: Icons.fort_rounded, color: const Color(0xFFBA68C8));
+  }
+  if (RegExp(r'公園|山|自然|garden|park|森|滝|湖').hasMatch(l)) {
+    return (icon: Icons.park_rounded, color: const Color(0xFF81C784));
+  }
+  if (RegExp(r'海|ビーチ|beach|港').hasMatch(l)) {
+    return (icon: Icons.beach_access_rounded, color: const Color(0xFF4FC3F7));
+  }
+  if (RegExp(r'レストラン|カフェ|食|グルメ|cafe|restaurant|ラーメン|寿司|焼').hasMatch(l)) {
+    return (icon: Icons.restaurant_rounded, color: const Color(0xFFFFB74D));
+  }
+  if (RegExp(r'ホテル|旅館|inn|hotel|宿').hasMatch(l)) {
+    return (icon: Icons.hotel_rounded, color: const Color(0xFF9575CD));
+  }
+  if (RegExp(r'駅|station').hasMatch(l)) {
+    return (icon: Icons.train_rounded, color: const Color(0xFF4DB6AC));
+  }
+  if (RegExp(r'空港|airport').hasMatch(l)) {
+    return (icon: Icons.flight_rounded, color: const Color(0xFF7986CB));
+  }
+  if (RegExp(r'美術館|博物館|museum|水族館|動物園').hasMatch(l)) {
+    return (icon: Icons.museum_rounded, color: const Color(0xFFA1887F));
+  }
+  if (RegExp(r'温泉|spa|風呂').hasMatch(l)) {
+    return (icon: Icons.hot_tub_rounded, color: const Color(0xFFEF5350));
+  }
+  if (RegExp(r'買|ショッピング|モール|shop|market|商店').hasMatch(l)) {
+    return (icon: Icons.shopping_bag_rounded, color: const Color(0xFFFF8A65));
+  }
+  return (icon: Icons.place_rounded, color: AppColors.accent);
 }
 
 /// 2点間のハーバーサイン距離（km）
@@ -1478,11 +2009,136 @@ double _haversineDistance(PlanItem from, PlanItem to) {
   return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
 }
 
-/// 距離に応じた移動手段絵文字
-String _transitEmoji(PlanItem from, PlanItem to) {
+/// 距離に応じた移動手段ラベル
+String _transitLabel(PlanItem from, PlanItem to) {
   final dist = _haversineDistance(from, to);
-  if (dist < 1.0) return '🚶';
-  if (dist < 15.0) return '🚗';
-  if (dist < 100.0) return '🚃';
-  return '✈️';
+  if (dist < 1.0) return '徒歩';
+  if (dist < 15.0) return '車';
+  if (dist < 100.0) return '電車';
+  return '飛行機';
+}
+
+/// 距離に応じた乗り物アイコンデータ
+({IconData icon, Color color}) _vehicleIconData(PlanItem from, PlanItem to) {
+  final dist = _haversineDistance(from, to);
+  if (dist < 1.0) {
+    return (
+      icon: Icons.directions_walk_rounded,
+      color: const Color(0xFF81C784),
+    );
+  }
+  if (dist < 15.0) {
+    return (icon: Icons.directions_car_rounded, color: const Color(0xFF4FC3F7));
+  }
+  if (dist < 100.0) {
+    return (icon: Icons.train_rounded, color: const Color(0xFF4DB6AC));
+  }
+  return (icon: Icons.flight_rounded, color: const Color(0xFF7986CB));
+}
+
+/// Material IconをPNG Uint8Listにレンダリング
+Future<Uint8List> _renderVehicleIcon(
+  IconData icon,
+  Color color, {
+  double size = 80,
+}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, size, size));
+
+  // 外側グロー
+  final glowPaint =
+      Paint()
+        ..color = color.withValues(alpha: 0.3)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+  canvas.drawCircle(Offset(size / 2, size / 2), size / 2 - 4, glowPaint);
+
+  // メイン円
+  final fillPaint = Paint()..color = color;
+  canvas.drawCircle(Offset(size / 2, size / 2), size / 2 - 8, fillPaint);
+
+  // 白い内円
+  final innerPaint = Paint()..color = Colors.white;
+  canvas.drawCircle(Offset(size / 2, size / 2), size / 2 - 14, innerPaint);
+
+  // アイコン描画
+  final textPainter = TextPainter(
+    text: TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: size * 0.4,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: color,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  textPainter.paint(
+    canvas,
+    Offset((size - textPainter.width) / 2, (size - textPainter.height) / 2),
+  );
+
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(size.toInt(), size.toInt());
+  final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+  return byteData!.buffer.asUint8List();
+}
+
+/// 地理座標の線形補間
+Position _interpolatePosition(Position from, Position to, double t) {
+  return Position(
+    from.lng + (to.lng - from.lng) * t,
+    from.lat + (to.lat - from.lat) * t,
+  );
+}
+
+/// easeInOutCubicカーブ
+double _easeInOutCubic(double t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - math.pow(-2 * t + 2, 3) / 2;
+}
+
+/// 2つのPositionからベアリング計算
+double _bearingBetween(Position from, Position to) {
+  final lat1 = from.lat * math.pi / 180;
+  final lon1 = from.lng * math.pi / 180;
+  final lat2 = to.lat * math.pi / 180;
+  final lon2 = to.lng * math.pi / 180;
+  final y = math.sin(lon2 - lon1) * math.cos(lat2);
+  final x =
+      math.cos(lat1) * math.sin(lat2) -
+      math.sin(lat1) * math.cos(lat2) * math.cos(lon2 - lon1);
+  return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+}
+
+/// スポットLottieアセットパス（デフォルトフォールバック）
+String _spotLottieAssetFor(String location) {
+  // TODO: スポットタイプ別Lottieファイルが追加されたらここで分岐
+  return 'assets/lottie/spot_default.json';
+}
+
+/// 距離に応じたカメラ設定
+({double zoom, double pitch}) _cameraForTransit(PlanItem? from, PlanItem to) {
+  if (from == null) return (zoom: 14.0, pitch: 45.0);
+  final dist = _haversineDistance(from, to);
+  if (dist < 1.0) return (zoom: 16.0, pitch: 60.0);
+  if (dist < 15.0) return (zoom: 15.0, pitch: 50.0);
+  if (dist < 100.0) return (zoom: 13.5, pitch: 40.0);
+  return (zoom: 11.0, pitch: 30.0);
+}
+
+/// 推定移動時間（分）
+String _estimatedTravelTime(PlanItem from, PlanItem to) {
+  final dist = _haversineDistance(from, to);
+  int minutes;
+  if (dist < 1.0) {
+    minutes = (dist * 1000 / 80).round(); // 徒歩 80m/min
+  } else if (dist < 15.0) {
+    minutes = (dist / 0.5).round(); // 車 30km/h市街地
+  } else if (dist < 100.0) {
+    minutes = (dist / 1.5).round(); // 電車 90km/h
+  } else {
+    minutes = (dist / 8).round(); // 飛行機 480km/h
+  }
+  if (minutes < 1) minutes = 1;
+  return '約$minutes分';
 }
