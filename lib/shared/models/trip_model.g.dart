@@ -33,6 +33,7 @@ _$TripModelImpl _$$TripModelImplFromJson(
       TripStatus.collecting,
   confirmedPlanId: json['confirmedPlanId'] as String?,
   editingPlanId: json['editingPlanId'] as String?,
+  aiGenerationCount: (json['aiGenerationCount'] as num?)?.toInt() ?? 0,
   createdAt: DateTime.parse(json['createdAt'] as String),
   updatedAt: DateTime.parse(json['updatedAt'] as String),
 );
@@ -49,6 +50,7 @@ Map<String, dynamic> _$$TripModelImplToJson(_$TripModelImpl instance) =>
       'status': _$TripStatusEnumMap[instance.status]!,
       'confirmedPlanId': instance.confirmedPlanId,
       'editingPlanId': instance.editingPlanId,
+      'aiGenerationCount': instance.aiGenerationCount,
       'createdAt': instance.createdAt.toIso8601String(),
       'updatedAt': instance.updatedAt.toIso8601String(),
     };

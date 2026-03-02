@@ -119,4 +119,12 @@ class TripController extends StateNotifier<AsyncValue<void>> {
   ) async {
     await _repository.updateMemberDetails(tripId, userId, member.toJson());
   }
+
+  /// AI生成回数をインクリメント
+  Future<void> incrementAiGenerationCount(String tripId) async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(
+      () => _repository.incrementAiGenerationCount(tripId),
+    );
+  }
 }

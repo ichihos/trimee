@@ -117,6 +117,14 @@ class TripRepository {
     });
   }
 
+  /// AI生成回数をインクリメント
+  Future<void> incrementAiGenerationCount(String tripId) async {
+    await _tripsCollection.doc(tripId).update({
+      'aiGenerationCount': FieldValue.increment(1),
+      'updatedAt': Timestamp.now(),
+    });
+  }
+
   /// 旅行を更新
   Future<void> updateTrip(TripModel trip) async {
     await _tripsCollection.doc(trip.id).update(trip.toFirestore());

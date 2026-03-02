@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
@@ -12,6 +14,7 @@ import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/models/plan_model.dart';
 import '../../../../shared/models/trip_member_model.dart';
 import '../../../../shared/models/trip_model.dart';
+import '../../../../shared/providers/ad_provider.dart';
 import '../../../../shared/services/ai_service.dart';
 import '../../../../shared/services/plan_export_service.dart';
 import '../../../../shared/widgets/animated_widgets.dart';
@@ -47,6 +50,8 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
   int _currentDay = 1;
   bool _isMapView = false;
   final GlobalKey _exportKey = GlobalKey();
+  BannerAd? _bannerAd;
+  bool _isBannerAdLoaded = false;
 
   @override
   void initState() {
@@ -61,6 +66,19 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
         });
       }
     });
+    // バナー広告をロード
+    _loadBannerAd();
+  }
+
+  void _loadBannerAd() {
+    if (kIsWeb) return;
+
+    _bannerAd = ref.read(adServiceProvider).createBannerAd()
+      ..load().then((_) {
+        if (mounted) {
+          setState(() => _isBannerAdLoaded = true);
+        }
+      });
   }
 
   void _updateCurrentDay() {
@@ -76,6 +94,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _bannerAd?.dispose();
     super.dispose();
   }
 
@@ -131,12 +150,10 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                 tooltip: 'プランを編集',
               ),
               // 共有ボタン
-              Builder(
-                builder: (context) => IconButton(
-                  icon: const Icon(Icons.share_outlined, color: Colors.white),
-                  onPressed: () => _sharePlan(context),
-                  tooltip: '共有',
-                ),
+              IconButton(
+                icon: const Icon(Icons.share_outlined, color: Colors.white),
+                onPressed: _showShareSheet,
+                tooltip: '共有',
               ),
             ],
             flexibleSpace: FlexibleSpaceBar(
@@ -214,6 +231,13 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
         ],
       ),
       ),
+      // バナー広告
+      bottomNavigationBar: _isBannerAdLoaded && _bannerAd != null
+          ? SizedBox(
+              height: _bannerAd!.size.height.toDouble(),
+              child: AdWidget(ad: _bannerAd!),
+            )
+          : null,
       // フローティング編集ボタン
       floatingActionButton:
           _isMapView
@@ -264,7 +288,248 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     );
   }
 
-  void _sharePlan(BuildContext buttonContext) {
+  void _showShareSheet() {
+    HapticFeedback.lightImpact();
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSizes.paddingL),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'プランを共有',
+                style: AppTypography.titleMedium.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+              _ExportOption(
+                icon: Icons.image_outlined,
+                label: '画像として保存',
+                subtitle: '現在の画面をPNG画像としてキャプチャ',
+                onTap: () {
+                  Navigator.pop(context);
+                  _exportAsImage();
+                },
+              ),
+              const SizedBox(height: AppSizes.paddingS),
+              _ExportOption(
+                icon: Icons.picture_as_pdf_outlined,
+                label: 'PDFとして保存',
+                subtitle: 'タイムライン形式のPDFを生成',
+                onTap: () {
+                  Navigator.pop(context);
+                  _exportAsPdf();
+                },
+              ),
+              const SizedBox(height: AppSizes.paddingS),
+              _ExportOption(
+                icon: Icons.text_snippet_outlined,
+                label: 'テキストで共有',
+                subtitle: 'プラン内容をテキスト形式で共有',
+                onTap: () {
+                  Navigator.pop(context);
+                  _shareAsText();
+                },
+              ),
+              const SizedBox(height: AppSizes.paddingS),
+              _ExportOption(
+                icon: Icons.person_add_outlined,
+                label: 'メンバーを招待',
+                subtitle: '旅行にメンバーを追加する',
+                onTap: () {
+                  Navigator.pop(context);
+                  _showInviteSheet();
+                },
+              ),
+              const SizedBox(height: AppSizes.paddingM),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Rect _getShareOrigin() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return Rect.zero;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  Future<void> _exportAsImage() async {
+    try {
+      final path = await PlanExportService.exportAsImage(_exportKey);
+      if (mounted) {
+        await Share.shareXFiles(
+          [XFile(path)],
+          subject: _currentPlan.title,
+          sharePositionOrigin: _getShareOrigin(),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('画像エクスポートエラー: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportAsPdf() async {
+    try {
+      final plan = _currentPlan;
+      final path = await PlanExportService.exportAsPdf(
+        plan: plan,
+        tripTitle: widget.trip?.title ?? '',
+        startDate: widget.trip?.startDate,
+      );
+      if (mounted) {
+        await Share.shareXFiles(
+          [XFile(path)],
+          subject: plan.title,
+          sharePositionOrigin: _getShareOrigin(),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('PDFエクスポートエラー: $e')),
+        );
+      }
+    }
+  }
+
+  void _showInviteSheet() {
+    HapticFeedback.lightImpact();
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSizes.paddingL),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'メンバーを招待',
+                style: AppTypography.titleMedium.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSizes.paddingS),
+              Text(
+                'リンクを共有すると、受け取った人がアプリからこの旅行に参加できます',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+              // 招待リンク表示とコピー
+              Container(
+                padding: const EdgeInsets.all(AppSizes.paddingM),
+                decoration: BoxDecoration(
+                  color: AppColors.cardBackground,
+                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.link,
+                          size: 20,
+                          color: AppColors.accent,
+                        ),
+                        const SizedBox(width: AppSizes.paddingS),
+                        Text(
+                          '招待リンク',
+                          style: AppTypography.labelMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSizes.paddingS),
+                    Text(
+                      'https://trimee-ai.com/join/${widget.tripId}',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSizes.paddingM),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        HapticFeedback.lightImpact();
+                        Clipboard.setData(
+                          ClipboardData(
+                            text: 'https://trimee-ai.com/join/${widget.tripId}',
+                          ),
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: const Text('招待リンクをコピーしました'),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                            ),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.copy, size: 18),
+                      label: const Text('リンクをコピー'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+              // 手動追加ボタン
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showAddMemberDialog();
+                },
+                icon: const Icon(Icons.person_add_outlined, size: 18),
+                label: const Text('メンバーを手動で追加'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.accent,
+                  side: const BorderSide(color: AppColors.accent),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingM),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAddMemberDialog() async {
+    await showDialog(
+      context: context,
+      builder: (context) => _AddMemberFromViewDialog(tripId: widget.tripId),
+    );
+  }
+
+  void _shareAsText() {
     HapticFeedback.lightImpact();
 
     final plan = _currentPlan;
@@ -315,12 +580,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
 
     buf.writeln('trimeeで作成');
 
-    final box = buttonContext.findRenderObject() as RenderBox?;
-    final origin = box != null
-        ? box.localToGlobal(Offset.zero) & box.size
-        : Rect.zero;
-
-    Share.share(buf.toString(), sharePositionOrigin: origin);
+    Share.share(buf.toString(), sharePositionOrigin: _getShareOrigin());
   }
 }
 
@@ -1411,6 +1671,319 @@ class _EmptySchedule extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// エクスポートオプション
+class _ExportOption extends StatelessWidget {
+  const _ExportOption({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.cardBackground,
+      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppSizes.radiusM),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSizes.paddingM),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusS),
+                ),
+                child: Icon(icon, color: AppColors.accent, size: 22),
+              ),
+              const SizedBox(width: AppSizes.paddingM),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: AppTypography.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: AppColors.textSecondary,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// メンバー追加ダイアログ（確定済みプランから）
+class _AddMemberFromViewDialog extends ConsumerStatefulWidget {
+  const _AddMemberFromViewDialog({required this.tripId});
+
+  final String tripId;
+
+  @override
+  ConsumerState<_AddMemberFromViewDialog> createState() =>
+      _AddMemberFromViewDialogState();
+}
+
+class _AddMemberFromViewDialogState
+    extends ConsumerState<_AddMemberFromViewDialog> {
+  final _nameController = TextEditingController();
+  final _departureController = TextEditingController();
+  final _departureFocus = FocusNode();
+  bool _isProcessing = false;
+  bool _isSuccess = false;
+  String _addedName = '';
+  String _personalLink = '';
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _departureController.dispose();
+    _departureFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addMember() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('名前を入力してください')),
+      );
+      return;
+    }
+
+    setState(() => _isProcessing = true);
+
+    try {
+      final personalLinkId = const Uuid().v4().substring(0, 8);
+      final memberId = 'manual_$personalLinkId';
+      final departure = _departureController.text.trim();
+      final member = TripMember(
+        userId: memberId,
+        displayName: name,
+        departurePoint: departure.isNotEmpty ? departure : null,
+        isManual: true,
+        personalLinkId: personalLinkId,
+        joinedAt: DateTime.now(),
+      );
+
+      await ref
+          .read(tripControllerProvider.notifier)
+          .updateMemberDetails(widget.tripId, memberId, member);
+
+      if (mounted) {
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _isSuccess = true;
+          _addedName = name;
+          _personalLink =
+              'https://trimee-ai.com/join/${widget.tripId}/$personalLinkId';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('エラー: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSizes.radiusL),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSizes.paddingL),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          transitionBuilder: (child, animation) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          child: _isSuccess ? _buildSuccessState() : _buildInputState(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputState() {
+    return Column(
+      key: const ValueKey('input'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'メンバーを追加',
+          style: AppTypography.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+        Text(
+          'セッションに参加できないメンバーを追加します',
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+        TextField(
+          controller: _nameController,
+          decoration: const InputDecoration(
+            labelText: '名前',
+            hintText: '例: たろう',
+            prefixIcon: Icon(Icons.person_outline),
+          ),
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _departureFocus.requestFocus(),
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+        TextField(
+          controller: _departureController,
+          focusNode: _departureFocus,
+          decoration: const InputDecoration(
+            labelText: '出発地点（任意）',
+            hintText: '例: 東京駅',
+            prefixIcon: Icon(Icons.location_on_outlined),
+          ),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _addMember(),
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('キャンセル'),
+              ),
+            ),
+            const SizedBox(width: AppSizes.paddingM),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _isProcessing ? null : _addMember,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                ),
+                child: _isProcessing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        '追加',
+                        style: TextStyle(color: Colors.white),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSuccessState() {
+    return Column(
+      key: const ValueKey('success'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Center(child: SuccessCheckAnimation(size: 60)),
+        const SizedBox(height: AppSizes.paddingL),
+        Text(
+          '$_addedNameさんを追加しました',
+          style: AppTypography.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingS),
+        Text(
+          '以下のリンクから参加できます',
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSizes.paddingL),
+        Container(
+          padding: const EdgeInsets.all(AppSizes.paddingM),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: SelectableText(
+            _personalLink,
+            style: AppTypography.bodySmall.copyWith(
+              color: AppColors.accent,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+        ElevatedButton.icon(
+          onPressed: () {
+            HapticFeedback.lightImpact();
+            Clipboard.setData(ClipboardData(text: _personalLink));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('リンクをコピーしました'),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                ),
+              ),
+            );
+          },
+          icon: const Icon(Icons.copy, size: 18),
+          label: const Text('リンクをコピー'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.accent,
+            foregroundColor: Colors.white,
+          ),
+        ),
+        const SizedBox(height: AppSizes.paddingM),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('閉じる'),
+        ),
+      ],
     );
   }
 }

@@ -39,6 +39,10 @@ class TripModel with _$TripModel {
     @Default(TripStatus.collecting) TripStatus status,
     String? confirmedPlanId,
     String? editingPlanId,
+
+    /// AI生成回数（旅行単位でのマネタイズ管理用）
+    @Default(0) int aiGenerationCount,
+
     required DateTime createdAt,
     required DateTime updatedAt,
   }) = _TripModel;
@@ -80,6 +84,7 @@ class TripModel with _$TripModel {
       ),
       confirmedPlanId: data['confirmedPlanId'],
       editingPlanId: data['editingPlanId'],
+      aiGenerationCount: data['aiGenerationCount'] as int? ?? 0,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       updatedAt: (data['updatedAt'] as Timestamp).toDate(),
     );
@@ -104,6 +109,7 @@ extension TripModelExtension on TripModel {
       'status': status.name,
       'confirmedPlanId': confirmedPlanId,
       'editingPlanId': editingPlanId,
+      'aiGenerationCount': aiGenerationCount,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };

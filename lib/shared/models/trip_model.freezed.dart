@@ -34,6 +34,9 @@ mixin _$TripModel {
   TripStatus get status => throw _privateConstructorUsedError;
   String? get confirmedPlanId => throw _privateConstructorUsedError;
   String? get editingPlanId => throw _privateConstructorUsedError;
+
+  /// AI生成回数（旅行単位でのマネタイズ管理用）
+  int get aiGenerationCount => throw _privateConstructorUsedError;
   DateTime get createdAt => throw _privateConstructorUsedError;
   DateTime get updatedAt => throw _privateConstructorUsedError;
 
@@ -63,6 +66,7 @@ abstract class $TripModelCopyWith<$Res> {
     TripStatus status,
     String? confirmedPlanId,
     String? editingPlanId,
+    int aiGenerationCount,
     DateTime createdAt,
     DateTime updatedAt,
   });
@@ -93,6 +97,7 @@ class _$TripModelCopyWithImpl<$Res, $Val extends TripModel>
     Object? status = null,
     Object? confirmedPlanId = freezed,
     Object? editingPlanId = freezed,
+    Object? aiGenerationCount = null,
     Object? createdAt = null,
     Object? updatedAt = null,
   }) {
@@ -148,6 +153,11 @@ class _$TripModelCopyWithImpl<$Res, $Val extends TripModel>
                     ? _value.editingPlanId
                     : editingPlanId // ignore: cast_nullable_to_non_nullable
                         as String?,
+            aiGenerationCount:
+                null == aiGenerationCount
+                    ? _value.aiGenerationCount
+                    : aiGenerationCount // ignore: cast_nullable_to_non_nullable
+                        as int,
             createdAt:
                 null == createdAt
                     ? _value.createdAt
@@ -184,6 +194,7 @@ abstract class _$$TripModelImplCopyWith<$Res>
     TripStatus status,
     String? confirmedPlanId,
     String? editingPlanId,
+    int aiGenerationCount,
     DateTime createdAt,
     DateTime updatedAt,
   });
@@ -213,6 +224,7 @@ class __$$TripModelImplCopyWithImpl<$Res>
     Object? status = null,
     Object? confirmedPlanId = freezed,
     Object? editingPlanId = freezed,
+    Object? aiGenerationCount = null,
     Object? createdAt = null,
     Object? updatedAt = null,
   }) {
@@ -268,6 +280,11 @@ class __$$TripModelImplCopyWithImpl<$Res>
                 ? _value.editingPlanId
                 : editingPlanId // ignore: cast_nullable_to_non_nullable
                     as String?,
+        aiGenerationCount:
+            null == aiGenerationCount
+                ? _value.aiGenerationCount
+                : aiGenerationCount // ignore: cast_nullable_to_non_nullable
+                    as int,
         createdAt:
             null == createdAt
                 ? _value.createdAt
@@ -297,6 +314,7 @@ class _$TripModelImpl implements _TripModel {
     this.status = TripStatus.collecting,
     this.confirmedPlanId,
     this.editingPlanId,
+    this.aiGenerationCount = 0,
     required this.createdAt,
     required this.updatedAt,
   }) : _members = members,
@@ -343,6 +361,11 @@ class _$TripModelImpl implements _TripModel {
   final String? confirmedPlanId;
   @override
   final String? editingPlanId;
+
+  /// AI生成回数（旅行単位でのマネタイズ管理用）
+  @override
+  @JsonKey()
+  final int aiGenerationCount;
   @override
   final DateTime createdAt;
   @override
@@ -350,7 +373,7 @@ class _$TripModelImpl implements _TripModel {
 
   @override
   String toString() {
-    return 'TripModel(id: $id, title: $title, createdBy: $createdBy, members: $members, memberDetails: $memberDetails, startDate: $startDate, endDate: $endDate, status: $status, confirmedPlanId: $confirmedPlanId, editingPlanId: $editingPlanId, createdAt: $createdAt, updatedAt: $updatedAt)';
+    return 'TripModel(id: $id, title: $title, createdBy: $createdBy, members: $members, memberDetails: $memberDetails, startDate: $startDate, endDate: $endDate, status: $status, confirmedPlanId: $confirmedPlanId, editingPlanId: $editingPlanId, aiGenerationCount: $aiGenerationCount, createdAt: $createdAt, updatedAt: $updatedAt)';
   }
 
   @override
@@ -375,6 +398,8 @@ class _$TripModelImpl implements _TripModel {
                 other.confirmedPlanId == confirmedPlanId) &&
             (identical(other.editingPlanId, editingPlanId) ||
                 other.editingPlanId == editingPlanId) &&
+            (identical(other.aiGenerationCount, aiGenerationCount) ||
+                other.aiGenerationCount == aiGenerationCount) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt) &&
             (identical(other.updatedAt, updatedAt) ||
@@ -395,6 +420,7 @@ class _$TripModelImpl implements _TripModel {
     status,
     confirmedPlanId,
     editingPlanId,
+    aiGenerationCount,
     createdAt,
     updatedAt,
   );
@@ -425,6 +451,7 @@ abstract class _TripModel implements TripModel {
     final TripStatus status,
     final String? confirmedPlanId,
     final String? editingPlanId,
+    final int aiGenerationCount,
     required final DateTime createdAt,
     required final DateTime updatedAt,
   }) = _$TripModelImpl;
@@ -454,6 +481,10 @@ abstract class _TripModel implements TripModel {
   String? get confirmedPlanId;
   @override
   String? get editingPlanId;
+
+  /// AI生成回数（旅行単位でのマネタイズ管理用）
+  @override
+  int get aiGenerationCount;
   @override
   DateTime get createdAt;
   @override

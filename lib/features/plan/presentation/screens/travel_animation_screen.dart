@@ -13,6 +13,7 @@ import 'package:trimee/core/constants/app_sizes.dart';
 import 'package:trimee/core/constants/app_typography.dart';
 import 'package:trimee/core/constants/mapbox_config.dart';
 import 'package:trimee/shared/models/plan_model.dart';
+import 'package:trimee/shared/providers/ad_provider.dart';
 import 'package:trimee/shared/services/video_export_service.dart';
 
 class TravelAnimationScreen extends ConsumerStatefulWidget {
@@ -126,10 +127,92 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   }
 
   Future<void> _stopExportAndSave() async {
+    setState(() => _isRecording = false);
+
+    // リワード広告のオプトイン確認
+    if (!kIsWeb) {
+      final shouldShowAd = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSizes.radiusL),
+          ),
+          title: const Text('動画を保存'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('動画を保存します。広告を視聴することで、開発を支援できます。'),
+              const SizedBox(height: AppSizes.paddingM),
+              Container(
+                padding: const EdgeInsets.all(AppSizes.paddingS),
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusS),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.lightbulb_outline,
+                      size: 16,
+                      color: AppColors.accent,
+                    ),
+                    const SizedBox(width: AppSizes.paddingS),
+                    Expanded(
+                      child: Text(
+                        '広告視聴は任意です',
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('広告なしで保存'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).pop(true),
+              icon: const Icon(Icons.play_arrow, size: 18),
+              label: const Text('広告を見る'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldShowAd == true) {
+        // リワード広告を表示
+        final adService = ref.read(adServiceProvider);
+        final rewarded = await adService.showRewardedAd();
+        if (!mounted) return;
+
+        if (rewarded) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('ありがとうございます！'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } else if (shouldShowAd == null) {
+        // ダイアログがキャンセルされた場合は録画を停止して終了
+        await VideoExportService.stopRecording();
+        return;
+      }
+    }
+
+    // 録画を停止して保存
     final path = await VideoExportService.stopRecording();
     if (!mounted) return;
-
-    setState(() => _isRecording = false);
 
     if (path != null) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,11 +14,13 @@ import '../../../../shared/models/plan_model.dart';
 import '../../../../shared/models/trip_member_model.dart';
 import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/providers/firebase_providers.dart';
+import '../../../../shared/providers/ad_provider.dart';
 import '../../../../shared/widgets/app_card.dart';
 import '../../../../shared/widgets/app_icon.dart';
 import '../../../../shared/widgets/empty_state.dart';
 import '../../../../shared/widgets/name_input_dialog.dart';
 import '../../../plan/presentation/providers/plan_provider.dart';
+import '../../../plan/presentation/widgets/ai_generation_gate_dialog.dart';
 import '../../../trip/presentation/providers/trip_provider.dart';
 import '../providers/card_provider.dart';
 
@@ -965,6 +968,9 @@ class _GeneratePlanFAB extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cardsAsync = ref.watch(tripCardsProvider(tripId));
+    final tripAsync = ref.watch(tripDetailProvider(tripId));
+    final trip = tripAsync.valueOrNull;
+
     final cardCount = cardsAsync.maybeWhen(
       data: (cards) => cards.length,
       orElse: () => 0,
@@ -995,8 +1001,94 @@ class _GeneratePlanFAB extends ConsumerWidget {
                 ],
               ),
         );
+        return;
+      }
+
+      if (trip == null) return;
+
+      // Web版のゲストユーザーはログインが必須
+      final userId = ref.read(currentUserIdProvider);
+      if (kIsWeb && (userId == null || userId.startsWith('guest_'))) {
+        final shouldLogin = await showDialog<bool>(
+          context: context,
+          builder:
+              (ctx) => AlertDialog(
+                backgroundColor: AppColors.cardBackground,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppSizes.radiusL),
+                ),
+                title: Row(
+                  children: [
+                    Icon(Icons.login, color: AppColors.accent),
+                    const SizedBox(width: 8),
+                    Text('ログインが必要です', style: AppTypography.titleMedium),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Web版でAI旅程を生成するには、ログインが必要です。',
+                      style: AppTypography.bodyMedium,
+                    ),
+                    const SizedBox(height: AppSizes.paddingS),
+                    Text(
+                      '※ これは不正利用を防ぐためのセキュリティ対策です。',
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(
+                      'キャンセル',
+                      style: AppTypography.labelMedium.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                    ),
+                    child: Text(
+                      'ログイン画面へ',
+                      style: AppTypography.labelMedium.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+        );
+
+        if (shouldLogin == true && context.mounted) {
+          context.go('/');
+        }
+        return;
+      }
+
+      // マネタイズゲート: 2回目以降の生成
+      if (trip.aiGenerationCount >= 1) {
+        final result = await showDialog<AiGenerationGateResult>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AiGenerationGateDialog(tripId: tripId),
+        );
+
+        if (result == AiGenerationGateResult.cancelled || result == null) {
+          // キャンセル
+          return;
+        }
+        // リワード広告3本視聴完了 or 課金購入完了 → AI生成へ進む
       } else {
-        // 確認ダイアログ
+        // 1回目の生成: 確認ダイアログ + インタースティシャル広告
         final confirmed = await showDialog<bool>(
           context: context,
           builder:
@@ -1049,13 +1141,22 @@ class _GeneratePlanFAB extends ConsumerWidget {
 
         if (confirmed != true) return;
 
-        // Firestoreのステータスを更新 → 全メンバーが自動遷移
-        await ref
-            .read(tripControllerProvider.notifier)
-            .updateStatus(tripId, TripStatus.voting);
-        if (context.mounted) {
-          context.go('/trip/$tripId/plan');
-        }
+        // 1回目の生成時のみインタースティシャル広告を表示
+        final adService = ref.read(adServiceProvider);
+        await adService.showInterstitialAdIfNeeded();
+      }
+
+      // AI生成回数をインクリメント
+      await ref
+          .read(tripControllerProvider.notifier)
+          .incrementAiGenerationCount(tripId);
+
+      // Firestoreのステータスを更新 → 全メンバーが自動遷移
+      await ref
+          .read(tripControllerProvider.notifier)
+          .updateStatus(tripId, TripStatus.voting);
+      if (context.mounted) {
+        context.go('/trip/$tripId/plan');
       }
     }
 

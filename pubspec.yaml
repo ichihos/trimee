@@ -55,6 +55,9 @@ dependencies:
   # Ads (for monetization)
   google_mobile_ads: ^5.3.1
 
+  # In-App Purchases (RevenueCat)
+  purchases_flutter: ^8.3.1
+
   # Social Authentication
   google_sign_in: ^6.2.1
   sign_in_with_apple: ^6.1.3
