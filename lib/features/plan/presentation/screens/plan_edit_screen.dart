@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'travel_animation_screen.dart';
-import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import '../../../../shared/utils/file_saver.dart' as file_saver;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -67,7 +67,8 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   bool _hasExternalUpdate = false;
   String? _otherEditorName;
   DateTime? _lastSaveTime;
-  bool _ignoreNextStreamUpdate = false;
+  /// この時刻までのストリーム更新を無視する（Firestoreの複数スナップショット対策）
+  DateTime? _ignoreStreamUntil;
   bool _isDragging = false; // ドラッグ中かどうか
 
   @override
@@ -138,11 +139,12 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         final plan = next.valueOrNull;
         if (plan == null || !mounted) return;
 
-        // 自分の保存による更新は無視
-        if (_ignoreNextStreamUpdate) {
-          _ignoreNextStreamUpdate = false;
+        // 自分の保存による更新は無視（時間ベースで判定）
+        if (_ignoreStreamUntil != null &&
+            DateTime.now().isBefore(_ignoreStreamUntil!)) {
           return;
         }
+        _ignoreStreamUntil = null;
 
         // 他のユーザーが編集中か確認
         if (plan.editingBy != null && plan.editingBy != currentUserId) {
@@ -252,7 +254,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   Future<void> _updateTitle(String newTitle) async {
     if (widget.plan.title == newTitle) return;
 
-    _ignoreNextStreamUpdate = true;
+    _ignoreStreamUntil = DateTime.now().add(const Duration(seconds: 2));
     try {
       await ref
           .read(planControllerProvider.notifier)
@@ -263,14 +265,14 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
           );
       _lastSaveTime = DateTime.now();
     } catch (e) {
-      _ignoreNextStreamUpdate = false;
+      _ignoreStreamUntil = null;
       // エラー処理
     }
   }
 
   /// アイコンを更新
   Future<void> _updateIcon(String? newIconUrl) async {
-    _ignoreNextStreamUpdate = true;
+    _ignoreStreamUntil = DateTime.now().add(const Duration(seconds: 2));
     try {
       await ref
           .read(planControllerProvider.notifier)
@@ -281,7 +283,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
           );
       _lastSaveTime = DateTime.now();
     } catch (e) {
-      _ignoreNextStreamUpdate = false;
+      _ignoreStreamUntil = null;
     }
   }
 
@@ -289,7 +291,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   Future<void> _updateDescription(String newDescription) async {
     if (widget.plan.description == newDescription) return;
 
-    _ignoreNextStreamUpdate = true;
+    _ignoreStreamUntil = DateTime.now().add(const Duration(seconds: 2));
     try {
       await ref
           .read(planControllerProvider.notifier)
@@ -300,7 +302,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
           );
       _lastSaveTime = DateTime.now();
     } catch (e) {
-      _ignoreNextStreamUpdate = false;
+      _ignoreStreamUntil = null;
     }
   }
 
@@ -313,7 +315,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       _showSaveIndicator = true;
     });
 
-    _ignoreNextStreamUpdate = true;
+    _ignoreStreamUntil = DateTime.now().add(const Duration(seconds: 2));
 
     try {
       await ref
@@ -325,7 +327,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
           );
       _lastSaveTime = DateTime.now();
     } catch (e) {
-      _ignoreNextStreamUpdate = false;
+      _ignoreStreamUntil = null;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -821,8 +823,21 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
             planDescription: _descriptionController.text,
             items: _items,
             onApplySuggestion: (newItems) {
+              // 空リストの場合は適用しない
+              if (newItems.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('AIの提案にアイテムが含まれていません'),
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                    ),
+                  ),
+                );
+                return;
+              }
               setState(() {
-                _items = newItems;
+                _items = _ensureItemIds(newItems);
               });
               _updateItems(_items);
             },
@@ -1034,8 +1049,14 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
 
   Future<void> _exportAsImage() async {
     try {
-      final path = await PlanExportService.exportAsImage(_exportKey);
-      if (mounted) {
+      final bytes = await PlanExportService.exportImageAsBytes(_exportKey);
+      if (!mounted) return;
+
+      final filename = 'plan_${DateTime.now().millisecondsSinceEpoch}.png';
+      if (kIsWeb) {
+        file_saver.triggerBrowserDownload(bytes, filename, 'image/png');
+      } else {
+        final path = await file_saver.saveToFile(bytes, filename);
         await Share.shareXFiles(
           [XFile(path)],
           subject: _titleController.text,
@@ -1056,7 +1077,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       final tripAsync = await ref.read(
         tripDetailProvider(widget.tripId).future,
       );
-      final path = await PlanExportService.exportAsPdf(
+      final bytes = await PlanExportService.exportPdfAsBytes(
         plan: widget.plan.copyWith(
           title: _titleController.text,
           description: _descriptionController.text,
@@ -1065,7 +1086,13 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         tripTitle: tripAsync?.title ?? '',
         startDate: tripAsync?.startDate,
       );
-      if (mounted) {
+      if (!mounted) return;
+
+      final filename = 'plan_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      if (kIsWeb) {
+        file_saver.triggerBrowserDownload(bytes, filename, 'application/pdf');
+      } else {
+        final path = await file_saver.saveToFile(bytes, filename);
         await Share.shareXFiles(
           [XFile(path)],
           subject: _titleController.text,
@@ -1951,7 +1978,7 @@ class _GuestLoginSheetState extends ConsumerState<_GuestLoginSheet> {
         const SizedBox(height: AppSizes.paddingS),
 
         // Appleボタン
-        if (!kIsWeb && Platform.isIOS) ...[
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) ...[
           SizedBox(
             width: double.infinity,
             height: 52,
@@ -2214,14 +2241,14 @@ class _PlanInfoCardState extends ConsumerState<_PlanInfoCard> {
     setState(() => _isUploadingIcon = true);
 
     try {
-      final file = File(image.path);
+      final bytes = await image.readAsBytes();
       final ref = FirebaseStorage.instance
           .ref()
           .child('plans')
           .child(widget.tripId)
           .child('${widget.planId}_icon.jpg');
 
-      await ref.putFile(file);
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
       final downloadUrl = await ref.getDownloadURL();
 
       if (mounted) {
@@ -3710,7 +3737,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
     setState(() => _isUploadingImage = true);
 
     try {
-      final file = File(image.path);
+      final bytes = await image.readAsBytes();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final ref = FirebaseStorage.instance
           .ref()
@@ -3718,7 +3745,7 @@ class _EditItemSheetState extends State<_EditItemSheet> {
           .child(widget.tripId)
           .child('${widget.planId}_booking_$timestamp.jpg');
 
-      await ref.putFile(file);
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
       final downloadUrl = await ref.getDownloadURL();
 
       if (mounted) {
@@ -4413,12 +4440,22 @@ class _AIAssistantSheetState extends ConsumerState<_AIAssistantSheet> {
   void _applySuggestion() {
     if (_lastSuggestion?.updatedItems != null) {
       final newItems = _lastSuggestion!.toPlanItems();
-      if (newItems != null) {
+      if (newItems != null && newItems.isNotEmpty) {
         widget.onApplySuggestion(newItems);
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('AIの提案を適用しました'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('提案の変換に失敗しました。もう一度お試しください'),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppSizes.radiusM),

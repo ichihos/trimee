@@ -10,6 +10,12 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // ユーザー基本情報（認証時に作成される内部コレクション）
+    match /users/{userId} {
+      // 本人のみ読み書き可能
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // 旅行
     match /trips/{tripId} {
       // IDを知っていれば読み取り可能（招待リンク・ID参加用）

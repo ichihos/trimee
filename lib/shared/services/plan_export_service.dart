@@ -1,10 +1,9 @@
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
@@ -14,31 +13,42 @@ class PlanExportService {
   static pw.Font? _cachedFont;
   static pw.Font? _cachedBoldFont;
 
-  /// ウィジェットを画像としてキャプチャし、一時ファイルパスを返す
-  static Future<String> exportAsImage(GlobalKey key) async {
+  /// ウィジェットを画像としてキャプチャし、PNGバイトを返す
+  static Future<Uint8List> exportImageAsBytes(
+    GlobalKey key, {
+    double pixelRatio = 3.0,
+    Function(String stage, double progress)? onProgress,
+  }) async {
+    onProgress?.call('画面をキャプチャ中...', 0.0);
+
     final boundary =
         key.currentContext!.findRenderObject() as RenderRepaintBoundary;
-    final image = await boundary.toImage(pixelRatio: 3.0);
+
+    onProgress?.call('高解像度レンダリング中...', 0.3);
+    final image = await boundary.toImage(pixelRatio: pixelRatio);
+
+    onProgress?.call('画像を変換中...', 0.6);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     final pngBytes = byteData!.buffer.asUint8List();
 
-    final dir = await getTemporaryDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final file = File('${dir.path}/plan_$timestamp.png');
-    await file.writeAsBytes(pngBytes);
-
-    return file.path;
+    onProgress?.call('完了', 1.0);
+    return pngBytes;
   }
 
-  /// プランをPDF形式で生成し、一時ファイルパスを返す
-  static Future<String> exportAsPdf({
+  /// プランをPDF形式で生成し、バイトを返す
+  static Future<Uint8List> exportPdfAsBytes({
     required PlanModel plan,
     required String tripTitle,
     DateTime? startDate,
+    Function(String stage, double progress)? onProgress,
   }) async {
-    // 日本語フォントをロード
+    onProgress?.call('フォントをダウンロード中...', 0.0);
+
     final font = await _loadJapaneseFont();
+    onProgress?.call('太字フォントをロード中...', 0.2);
     final boldFont = await _loadJapaneseFont(bold: true);
+
+    onProgress?.call('PDFを構築中...', 0.4);
 
     final pdf = pw.Document();
     final boldStyle = pw.TextStyle(font: boldFont, fontSize: 10);
@@ -57,7 +67,6 @@ class PlanExportService {
     }
     final days = itemsByDay.keys.toList()..sort();
 
-    // accentカラー
     const accent = PdfColor.fromInt(0xFFC4785B);
 
     pdf.addPage(
@@ -90,7 +99,6 @@ class PlanExportService {
             final dayItems = itemsByDay[day]!
               ..sort((a, b) => a.time.compareTo(b.time));
 
-            // 日付ヘッダー
             String dayLabel = '$day日目';
             if (startDate != null) {
               final date = startDate.add(Duration(days: day - 1));
@@ -119,7 +127,6 @@ class PlanExportService {
               ),
             );
 
-            // アイテム
             for (final item in dayItems) {
               widgets.add(
                 pw.Container(
@@ -132,7 +139,6 @@ class PlanExportService {
                   child: pw.Row(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
-                      // 時刻
                       pw.SizedBox(
                         width: 50,
                         child: pw.Text(
@@ -144,7 +150,6 @@ class PlanExportService {
                           ),
                         ),
                       ),
-                      // 縦線
                       pw.Container(
                         width: 2,
                         height: 30,
@@ -152,7 +157,6 @@ class PlanExportService {
                             const pw.EdgeInsets.symmetric(horizontal: 8),
                         color: accent,
                       ),
-                      // 内容
                       pw.Expanded(
                         child: pw.Column(
                           crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -167,7 +171,6 @@ class PlanExportService {
                           ],
                         ),
                       ),
-                      // 所要時間
                       pw.Container(
                         padding: const pw.EdgeInsets.symmetric(
                           horizontal: 8,
@@ -194,12 +197,8 @@ class PlanExportService {
       ),
     );
 
-    final dir = await getTemporaryDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final file = File('${dir.path}/plan_$timestamp.pdf');
-    await file.writeAsBytes(await pdf.save());
-
-    return file.path;
+    onProgress?.call('完了', 1.0);
+    return pdf.save();
   }
 
   static pw.Widget _buildPdfHeader({
@@ -249,72 +248,42 @@ class PlanExportService {
     );
   }
 
-  /// NotoSansJPフォントをダウンロードしてキャッシュ、pdf用Fontとして返す
+  /// NotoSansJPフォントをダウンロードしてメモリキャッシュ
   static Future<pw.Font> _loadJapaneseFont({bool bold = false}) async {
-    // キャッシュチェック
     if (bold && _cachedBoldFont != null) return _cachedBoldFont!;
     if (!bold && _cachedFont != null) return _cachedFont!;
 
     try {
-      final dir = await getApplicationSupportDirectory();
-      final weight = bold ? 'Bold' : 'Regular';
-      final cacheFile = File('${dir.path}/NotoSansJP-$weight.ttf');
-
-      // キャッシュ済みファイルがあればそれを使用
-      if (cacheFile.existsSync()) {
-        final bytes = await cacheFile.readAsBytes();
-        final font = pw.Font.ttf(ByteData.sublistView(bytes));
-        if (bold) {
-          _cachedBoldFont = font;
-        } else {
-          _cachedFont = font;
-        }
-        return font;
-      }
-
-      // Google Fonts CDNからダウンロード
       final weightValue = bold ? '700' : '400';
-      final url = Uri.parse(
-        'https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@$weightValue&display=swap',
+      final cssUrl =
+          'https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@$weightValue&display=swap';
+
+      // CSSをダウンロード
+      final cssResponse = await http.get(
+        Uri.parse(cssUrl),
+        headers: {'User-Agent': 'Mozilla/5.0'},
       );
+      if (cssResponse.statusCode != 200) {
+        return bold ? pw.Font.helveticaBold() : pw.Font.helvetica();
+      }
+      final css = cssResponse.body;
 
-      final client = HttpClient();
-      final cssRequest = await client.getUrl(url);
-      cssRequest.headers.set('User-Agent', 'Mozilla/5.0');
-      final cssResponse = await cssRequest.close();
-      final css = await cssResponse.transform(const SystemEncoding().decoder).join();
-
-      // CSSからフォントURLを抽出
-      final fontUrlMatch = RegExp(r'url\((https://[^)]+\.ttf)\)').firstMatch(css);
+      // CSSからフォントURLを抽出（TTF or OTF）
+      final fontUrlMatch =
+          RegExp(r'url\((https://[^)]+\.(?:ttf|otf))\)').firstMatch(css);
       if (fontUrlMatch == null) {
-        // OTF形式も試す
-        final otfMatch = RegExp(r'url\((https://[^)]+\.otf)\)').firstMatch(css);
-        if (otfMatch == null) {
-          return bold ? pw.Font.helveticaBold() : pw.Font.helvetica();
-        }
-        final fontUrl = Uri.parse(otfMatch.group(1)!);
-        final fontRequest = await client.getUrl(fontUrl);
-        final fontResponse = await fontRequest.close();
-        final fontBytes = await _collectBytes(fontResponse);
-        await cacheFile.writeAsBytes(fontBytes);
-        final font = pw.Font.ttf(ByteData.sublistView(Uint8List.fromList(fontBytes)));
-        if (bold) {
-          _cachedBoldFont = font;
-        } else {
-          _cachedFont = font;
-        }
-        client.close();
-        return font;
+        return bold ? pw.Font.helveticaBold() : pw.Font.helvetica();
       }
 
-      final fontUrl = Uri.parse(fontUrlMatch.group(1)!);
-      final fontRequest = await client.getUrl(fontUrl);
-      final fontResponse = await fontRequest.close();
-      final fontBytes = await _collectBytes(fontResponse);
-      await cacheFile.writeAsBytes(fontBytes);
-      client.close();
+      // フォントファイルをダウンロード
+      final fontResponse = await http.get(Uri.parse(fontUrlMatch.group(1)!));
+      if (fontResponse.statusCode != 200) {
+        return bold ? pw.Font.helveticaBold() : pw.Font.helvetica();
+      }
 
-      final font = pw.Font.ttf(ByteData.sublistView(Uint8List.fromList(fontBytes)));
+      final font = pw.Font.ttf(
+        ByteData.sublistView(fontResponse.bodyBytes),
+      );
       if (bold) {
         _cachedBoldFont = font;
       } else {
@@ -325,13 +294,5 @@ class PlanExportService {
       debugPrint('Error loading Japanese font: $e');
       return bold ? pw.Font.helveticaBold() : pw.Font.helvetica();
     }
-  }
-
-  static Future<List<int>> _collectBytes(HttpClientResponse response) async {
-    final bytes = <int>[];
-    await for (final chunk in response) {
-      bytes.addAll(chunk);
-    }
-    return bytes;
   }
 }

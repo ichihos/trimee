@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/iap_constants.dart';
@@ -40,6 +42,30 @@ class _AiGenerationGateDialogState
   bool _isWatchingAd = false;
   bool _isPurchasing = false;
   String _priceDisplay = IAPConstants.aiGenerationPriceDisplay;
+
+  // TODO: DEBUG REMOVE - 隠しデバッグコマンド用の状態
+  bool _isAdPressed = false;
+  bool _isPayPressed = false;
+  Timer? _debugTimer;
+
+  void _checkDebugBypass() {
+    if (_isAdPressed && _isPayPressed) {
+      _debugTimer ??= Timer(const Duration(seconds: 10), () {
+        if (mounted && _isAdPressed && _isPayPressed) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('DEBUG: AI生成をバイパスしました'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+          Navigator.of(context).pop(AiGenerationGateResult.purchased);
+        }
+      });
+    } else {
+      _debugTimer?.cancel();
+      _debugTimer = null;
+    }
+  }
 
   @override
   void initState() {
@@ -202,6 +228,94 @@ class _AiGenerationGateDialogState
     final theme = Theme.of(context);
     final remaining = 3 - _watchProgress;
 
+    if (kIsWeb) {
+      return Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // TODO: DEBUG REMOVE - 隠しデバッグコマンド用のListener
+              Listener(
+                onPointerDown: (_) {
+                  _isAdPressed = true;
+                  _checkDebugBypass();
+                },
+                onPointerUp: (_) {
+                  _isAdPressed = false;
+                  _checkDebugBypass();
+                },
+                onPointerCancel: (_) {
+                  _isAdPressed = false;
+                  _checkDebugBypass();
+                },
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.auto_awesome,
+                    size: 32,
+                    color: theme.primaryColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'モバイルアプリで作成',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Web版でのAIプラン生成は初回のみ無料です。\n\n2回目以降の生成をご希望の場合は、iOSまたはAndroidアプリをダウンロードして続きをお楽しみください！',
+                textAlign: TextAlign.center,
+                style: TextStyle(height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              // TODO: DEBUG REMOVE - 隠しデバッグコマンド用のListener
+              Listener(
+                onPointerDown: (_) {
+                  _isPayPressed = true;
+                  _checkDebugBypass();
+                },
+                onPointerUp: (_) {
+                  _isPayPressed = false;
+                  _checkDebugBypass();
+                },
+                onPointerCancel: (_) {
+                  _isPayPressed = false;
+                  _checkDebugBypass();
+                },
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(AiGenerationGateResult.cancelled);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('閉じる'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Dialog(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
@@ -247,9 +361,23 @@ class _AiGenerationGateDialogState
             const SizedBox(height: 24),
 
             // オプション1: リワード広告
-            _OptionCard(
-              icon: Icons.play_circle_outline,
-              iconColor: Colors.blue,
+            // TODO: DEBUG REMOVE - 隠しデバッグコマンド用のListener
+            Listener(
+              onPointerDown: (_) {
+                _isAdPressed = true;
+                _checkDebugBypass();
+              },
+              onPointerUp: (_) {
+                _isAdPressed = false;
+                _checkDebugBypass();
+              },
+              onPointerCancel: (_) {
+                _isAdPressed = false;
+                _checkDebugBypass();
+              },
+              child: _OptionCard(
+                icon: Icons.play_circle_outline,
+                iconColor: Colors.blue,
               title: '広告を見て生成',
               subtitle: remaining > 0
                   ? 'あと$remaining本の広告視聴で生成できます'
@@ -259,18 +387,34 @@ class _AiGenerationGateDialogState
               onTap: _isWatchingAd ? null : _watchRewardAd,
               isLoading: _isWatchingAd,
             ),
+            ),
             const SizedBox(height: 12),
 
             // オプション2: 課金購入
-            _OptionCard(
-              icon: Icons.shopping_bag_outlined,
-              iconColor: Colors.amber,
+            // TODO: DEBUG REMOVE - 隠しデバッグコマンド用のListener
+            Listener(
+              onPointerDown: (_) {
+                _isPayPressed = true;
+                _checkDebugBypass();
+              },
+              onPointerUp: (_) {
+                _isPayPressed = false;
+                _checkDebugBypass();
+              },
+              onPointerCancel: (_) {
+                _isPayPressed = false;
+                _checkDebugBypass();
+              },
+              child: _OptionCard(
+                icon: Icons.shopping_bag_outlined,
+                iconColor: Colors.amber,
               title: '$_priceDisplayで即時生成',
               subtitle: '広告なしでスムーズに旅程作成',
               badge: _priceDisplay,
               badgeColor: Colors.amber,
               onTap: _isPurchasing ? null : _purchaseAiGeneration,
               isLoading: _isPurchasing,
+            ),
             ),
             const SizedBox(height: 24),
 

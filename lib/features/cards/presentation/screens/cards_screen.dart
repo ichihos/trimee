@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:uuid/uuid.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_strings.dart';
@@ -22,6 +21,7 @@ import '../../../../shared/widgets/name_input_dialog.dart';
 import '../../../plan/presentation/providers/plan_provider.dart';
 import '../../../plan/presentation/widgets/ai_generation_gate_dialog.dart';
 import '../../../trip/presentation/providers/trip_provider.dart';
+import '../../../../shared/widgets/invite_sheet.dart';
 import '../providers/card_provider.dart';
 
 import '../../../../shared/widgets/chat_overlay.dart';
@@ -230,7 +230,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => _InviteSheet(tripId: widget.tripId),
+      builder: (context) => InviteSheet(tripId: widget.tripId),
     );
   }
 
@@ -1181,244 +1181,8 @@ class _GeneratePlanFAB extends ConsumerWidget {
   }
 }
 
-const _uuid = Uuid();
-
-/// 招待シート
-class _InviteSheet extends ConsumerWidget {
-  const _InviteSheet({required this.tripId});
-
-  final String tripId;
-
-  Future<void> _showAddManualMemberDialog(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final nameController = TextEditingController();
-    final departureController = TextEditingController();
-    final departureFocus = FocusNode();
-
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder:
-          (dialogContext) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSizes.radiusL),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSizes.paddingL),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'メンバーを追加',
-                    style: AppTypography.titleMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSizes.paddingS),
-                  Text(
-                    'セッションに参加できないメンバーを代わりに追加します',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSizes.paddingL),
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: '名前',
-                      hintText: '例: たろう',
-                      prefixIcon: Icon(Icons.person_outline),
-                    ),
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.words,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => departureFocus.requestFocus(),
-                  ),
-                  const SizedBox(height: AppSizes.paddingM),
-                  TextField(
-                    controller: departureController,
-                    focusNode: departureFocus,
-                    decoration: const InputDecoration(
-                      labelText: '出発地点（任意）',
-                      hintText: '例: 東京駅',
-                      prefixIcon: Icon(Icons.location_on_outlined),
-                    ),
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) {
-                      final name = nameController.text.trim();
-                      if (name.isEmpty) return;
-                      Navigator.pop(dialogContext, {
-                        'name': name,
-                        'departure': departureController.text.trim(),
-                      });
-                    },
-                  ),
-                  const SizedBox(height: AppSizes.paddingL),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          child: const Text('キャンセル'),
-                        ),
-                      ),
-                      const SizedBox(width: AppSizes.paddingM),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            final name = nameController.text.trim();
-                            if (name.isEmpty) {
-                              ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                const SnackBar(content: Text('名前を入力してください')),
-                              );
-                              return;
-                            }
-                            Navigator.pop(dialogContext, {
-                              'name': name,
-                              'departure': departureController.text.trim(),
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.accent,
-                          ),
-                          child: const Text(
-                            '追加',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-    );
-
-    nameController.dispose();
-    departureController.dispose();
-    departureFocus.dispose();
-
-    if (result != null) {
-      final personalLinkId = _uuid.v4().substring(0, 8);
-      final memberId = 'manual_$personalLinkId';
-      final member = TripMember(
-        userId: memberId,
-        displayName: result['name']!,
-        departurePoint:
-            result['departure']!.isNotEmpty ? result['departure'] : null,
-        isManual: true,
-        personalLinkId: personalLinkId,
-        joinedAt: DateTime.now(),
-      );
-
-      await ref
-          .read(tripControllerProvider.notifier)
-          .updateMemberDetails(tripId, memberId, member);
-
-      if (context.mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${result['name']}さんを追加しました'),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSizes.radiusM),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final inviteLink = 'https://trimee-ai.com/join/$tripId';
-
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppSizes.radiusXL),
-        ),
-      ),
-      padding: const EdgeInsets.all(AppSizes.paddingL),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // ハンドル
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: AppSizes.paddingL),
-
-          Row(
-            children: [
-              const AppIcon(type: AppIconType.group, size: 28),
-              const SizedBox(width: AppSizes.paddingS),
-              Text(
-                AppStrings.inviteMembers,
-                style: AppTypography.headlineSmall,
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSizes.paddingM),
-
-          Text(
-            'リンクを共有するか、メンバーを手動で追加できます',
-            style: AppTypography.bodyMedium.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: AppSizes.paddingL),
-
-          // リンクコピーボタン
-          OutlinedButton.icon(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: inviteLink));
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text(AppStrings.linkCopied),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                  ),
-                ),
-              );
-              Navigator.pop(context);
-            },
-            icon: const Icon(Icons.link_rounded),
-            label: const Text(AppStrings.copyLink),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-            ),
-          ),
-          const SizedBox(height: AppSizes.paddingM),
-
-          // 手動追加ボタン
-          OutlinedButton.icon(
-            onPressed: () => _showAddManualMemberDialog(context, ref),
-            icon: const Icon(Icons.person_add_alt_1_rounded),
-            label: const Text('メンバーを手動で追加'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-              foregroundColor: AppColors.subAccent,
-              side: const BorderSide(color: AppColors.subAccent),
-            ),
-          ),
-          const SizedBox(height: AppSizes.paddingL),
-        ],
-      ),
-    );
-  }
-}
+/// 招待シートは共有ウィジェット InviteSheet を使用
+/// （lib/shared/widgets/invite_sheet.dart）
 
 /// カード追加シート
 class _AddCardSheet extends ConsumerStatefulWidget {
@@ -1674,6 +1438,10 @@ class _AddCardSheetState extends ConsumerState<_AddCardSheet> {
             title: title,
             cardType: _selectedCardType,
             anonymous: _isAnonymous,
+          )
+          .timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => null,
           );
 
       if (mounted) {
@@ -1700,6 +1468,10 @@ class _AddCardSheetState extends ConsumerState<_AddCardSheet> {
             cardId: widget.editingCard!.id,
             title: title,
             cardType: _selectedCardType,
+          )
+          .timeout(
+            const Duration(seconds: 3),
+            onTimeout: () {},
           );
 
       if (mounted) {

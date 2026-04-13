@@ -8,6 +8,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
+import '../../../../shared/utils/file_saver.dart' as file_saver;
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_typography.dart';
@@ -48,8 +49,11 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
   Timer? _clockTimer;
   DateTime _currentTime = DateTime.now();
   int _currentDay = 1;
+  int _selectedDay = 1;
   bool _isMapView = false;
   final GlobalKey _exportKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey> _daySectionKeys = {};
   BannerAd? _bannerAd;
   bool _isBannerAdLoaded = false;
 
@@ -88,12 +92,14 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
       final difference = today.difference(startDate).inDays;
       _currentDay = difference + 1;
       if (_currentDay < 1) _currentDay = 1;
+      _selectedDay = _currentDay;
     }
   }
 
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _scrollController.dispose();
     _bannerAd?.dispose();
     super.dispose();
   }
@@ -110,6 +116,44 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     return watchedPlan ?? widget.plan;
   }
 
+  void _scrollToDay(int day) {
+    setState(() => _selectedDay = day);
+
+    final key = _daySectionKeys[day];
+    if (key?.currentContext != null) {
+      Scrollable.ensureVisible(
+        key!.currentContext!,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+        alignment: 0.1,
+      );
+    } else {
+      // オフスクリーンのセクションの場合、スクロール位置を推定してジャンプ
+      final days = _daySectionKeys.keys.toList()..sort();
+      final dayIndex = days.indexOf(day);
+      if (dayIndex >= 0 && _scrollController.hasClients) {
+        final estimatedOffset = dayIndex * 400.0;
+        final maxOffset = _scrollController.position.maxScrollExtent;
+        _scrollController.animateTo(
+          estimatedOffset.clamp(0.0, maxOffset),
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
+        // スクロール後に正確な位置へ再調整
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (mounted && key?.currentContext != null) {
+            Scrollable.ensureVisible(
+              key!.currentContext!,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              alignment: 0.1,
+            );
+          }
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final plan = _currentPlan;
@@ -121,11 +165,17 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     }
     final days = itemsByDay.keys.toList()..sort();
 
+    // 各日付セクション用のキーを生成
+    for (final day in days) {
+      _daySectionKeys.putIfAbsent(day, () => GlobalKey());
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: RepaintBoundary(
         key: _exportKey,
         child: CustomScrollView(
+          controller: _scrollController,
         slivers: [
           // ヘッダー
           SliverAppBar(
@@ -137,12 +187,13 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
               onPressed: () => Navigator.pop(context),
             ),
             actions: [
-              // 動画出力ボタン
-              IconButton(
-                icon: const Icon(Icons.play_circle_outline, color: Colors.white),
-                onPressed: _showTravelAnimation,
-                tooltip: '旅の軌跡',
-              ),
+              // 動画出力ボタン（Webでは非表示）
+              if (!kIsWeb)
+                IconButton(
+                  icon: const Icon(Icons.play_circle_outline, color: Colors.white),
+                  onPressed: _showTravelAnimation,
+                  tooltip: '旅の軌跡',
+                ),
               // 編集ボタン
               IconButton(
                 icon: const Icon(Icons.edit_outlined, color: Colors.white),
@@ -195,8 +246,10 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                 delegate: _DayTabDelegate(
                   days: days,
                   currentDay: _currentDay,
+                  selectedDay: _selectedDay,
                   onDaySelected: (day) {
                     HapticFeedback.selectionClick();
+                    _scrollToDay(day);
                   },
                 ),
               ),
@@ -215,6 +268,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                   final isToday = day == _currentDay;
 
                   return _DaySection(
+                    key: _daySectionKeys[day],
                     day: day,
                     items: items,
                     isToday: isToday,
@@ -364,9 +418,102 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
   }
 
   Future<void> _exportAsImage() async {
+    if (!mounted) return;
+
+    // 画質選択ダイアログ
+    final quality = await showDialog<_ImageQuality>(
+      context: context,
+      builder: (ctx) => _QualitySelectionDialog(),
+    );
+
+    if (quality == null || !mounted) return;
+
+    // 進捗状態を管理
+    String currentStage = '準備中...';
+    double currentProgress = 0.0;
+
+    // 進捗ダイアログを表示
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(value: currentProgress),
+                const SizedBox(height: 16),
+                Text(
+                  currentStage,
+                  style: AppTypography.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${(currentProgress * 100).toInt()}%',
+                  style: AppTypography.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
     try {
-      final path = await PlanExportService.exportAsImage(_exportKey);
-      if (mounted) {
+      final bytes = await PlanExportService.exportImageAsBytes(
+        _exportKey,
+        pixelRatio: quality.pixelRatio,
+        onProgress: (stage, progress) {
+          currentStage = stage;
+          currentProgress = progress;
+          if (mounted) {
+            // ignore: invalid_use_of_protected_member
+            (context as Element).markNeedsBuild();
+          }
+        },
+      );
+
+      if (!mounted) return;
+
+      // ローディング閉じる
+      Navigator.of(context).pop();
+
+      // 成功フィードバック
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Text('${quality.label}画像を生成しました！'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // 共有/ダウンロード
+      final filename = 'plan_${DateTime.now().millisecondsSinceEpoch}.png';
+      if (kIsWeb) {
+        file_saver.triggerBrowserDownload(bytes, filename, 'image/png');
+      } else {
+        final path = await file_saver.saveToFile(bytes, filename);
         await Share.shareXFiles(
           [XFile(path)],
           subject: _currentPlan.title,
@@ -374,23 +521,145 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('画像エクスポートエラー: $e')),
-        );
+      if (!mounted) return;
+
+      // ローディング閉じる
+      Navigator.of(context).pop();
+
+      // エラー表示（リトライ付き）
+      final shouldRetry = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red),
+              SizedBox(width: 8),
+              Text('エクスポートエラー'),
+            ],
+          ),
+          content: Text(
+            '画像の生成に失敗しました。\n\nもう一度お試しください。',
+            style: AppTypography.bodyMedium,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('キャンセル'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+              ),
+              child: const Text(
+                'リトライ',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldRetry == true && mounted) {
+        _exportAsImage();
       }
     }
   }
 
   Future<void> _exportAsPdf() async {
+    if (!mounted) return;
+
+    // 進捗状態を管理
+    String currentStage = '準備中...';
+    double currentProgress = 0.0;
+
+    // 進捗ダイアログを表示
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(value: currentProgress),
+                const SizedBox(height: 16),
+                Text(
+                  currentStage,
+                  style: AppTypography.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${(currentProgress * 100).toInt()}%',
+                  style: AppTypography.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
     try {
       final plan = _currentPlan;
-      final path = await PlanExportService.exportAsPdf(
+      final bytes = await PlanExportService.exportPdfAsBytes(
         plan: plan,
         tripTitle: widget.trip?.title ?? '',
         startDate: widget.trip?.startDate,
+        onProgress: (stage, progress) {
+          currentStage = stage;
+          currentProgress = progress;
+          if (mounted) {
+            // ignore: invalid_use_of_protected_member
+            (context as Element).markNeedsBuild();
+          }
+        },
       );
-      if (mounted) {
+
+      if (!mounted) return;
+
+      // ローディング閉じる
+      Navigator.of(context).pop();
+
+      // 成功フィードバック
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 12),
+              Text('PDF生成完了！'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // 共有/ダウンロード
+      final filename = 'plan_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      if (kIsWeb) {
+        file_saver.triggerBrowserDownload(bytes, filename, 'application/pdf');
+      } else {
+        final path = await file_saver.saveToFile(bytes, filename);
         await Share.shareXFiles(
           [XFile(path)],
           subject: plan.title,
@@ -398,10 +667,50 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('PDFエクスポートエラー: $e')),
-        );
+      if (!mounted) return;
+
+      // ローディング閉じる
+      Navigator.of(context).pop();
+
+      // エラー表示（リトライ付き）
+      final shouldRetry = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red),
+              SizedBox(width: 8),
+              Text('エクスポートエラー'),
+            ],
+          ),
+          content: Text(
+            'PDFの生成に失敗しました。\n\nネットワーク接続を確認して、もう一度お試しください。',
+            style: AppTypography.bodyMedium,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('キャンセル'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+              ),
+              child: const Text(
+                'リトライ',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldRetry == true && mounted) {
+        _exportAsPdf();
       }
     }
   }
@@ -754,11 +1063,13 @@ class _DayTabDelegate extends SliverPersistentHeaderDelegate {
   _DayTabDelegate({
     required this.days,
     required this.currentDay,
+    required this.selectedDay,
     required this.onDaySelected,
   });
 
   final List<int> days;
   final int currentDay;
+  final int selectedDay;
   final Function(int) onDaySelected;
 
   @override
@@ -779,35 +1090,44 @@ class _DayTabDelegate extends SliverPersistentHeaderDelegate {
           children:
               days.map((day) {
                 final isToday = day == currentDay;
+                final isSelected = day == selectedDay;
                 return Padding(
                   padding: const EdgeInsets.only(right: AppSizes.paddingS),
                   child: GestureDetector(
                     onTap: () => onDaySelected(day),
-                    child: Container(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSizes.paddingM,
                         vertical: AppSizes.paddingS,
                       ),
                       decoration: BoxDecoration(
                         color:
-                            isToday
+                            isSelected
                                 ? AppColors.accent
                                 : AppColors.cardBackground,
                         borderRadius: BorderRadius.circular(
                           AppSizes.radiusFull,
                         ),
                         border: Border.all(
-                          color: isToday ? AppColors.accent : AppColors.border,
+                          color: isSelected ? AppColors.accent : AppColors.border,
                         ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (isToday) ...[
+                          if (isToday && isSelected) ...[
                             const Icon(
                               Icons.today,
                               size: 14,
                               color: Colors.white,
+                            ),
+                            const SizedBox(width: 4),
+                          ] else if (isToday) ...[
+                            Icon(
+                              Icons.today,
+                              size: 14,
+                              color: AppColors.accent,
                             ),
                             const SizedBox(width: 4),
                           ],
@@ -815,11 +1135,11 @@ class _DayTabDelegate extends SliverPersistentHeaderDelegate {
                             '$day日目',
                             style: AppTypography.labelMedium.copyWith(
                               color:
-                                  isToday
+                                  isSelected
                                       ? Colors.white
                                       : AppColors.textPrimary,
                               fontWeight:
-                                  isToday ? FontWeight.w600 : FontWeight.normal,
+                                  isSelected ? FontWeight.w600 : FontWeight.normal,
                             ),
                           ),
                         ],
@@ -841,13 +1161,16 @@ class _DayTabDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(covariant _DayTabDelegate oldDelegate) {
-    return days != oldDelegate.days || currentDay != oldDelegate.currentDay;
+    return days != oldDelegate.days ||
+        currentDay != oldDelegate.currentDay ||
+        selectedDay != oldDelegate.selectedDay;
   }
 }
 
 /// 日別セクション
 class _DaySection extends StatelessWidget {
   const _DaySection({
+    super.key,
     required this.day,
     required this.items,
     required this.isToday,
@@ -1743,6 +2066,201 @@ class _ExportOption extends StatelessWidget {
   }
 }
 
+/// 画質設定
+class _ImageQuality {
+  const _ImageQuality({
+    required this.label,
+    required this.pixelRatio,
+    required this.description,
+  });
+
+  final String label;
+  final double pixelRatio;
+  final String description;
+
+  static const high = _ImageQuality(
+    label: '高画質',
+    pixelRatio: 4.0,
+    description: '最高品質（ファイルサイズ大）',
+  );
+
+  static const standard = _ImageQuality(
+    label: '標準',
+    pixelRatio: 3.0,
+    description: 'バランスの取れた品質',
+  );
+
+  static const fast = _ImageQuality(
+    label: '高速',
+    pixelRatio: 2.0,
+    description: '低容量で高速生成',
+  );
+}
+
+/// 画質選択ダイアログ
+class _QualitySelectionDialog extends StatelessWidget {
+  const _QualitySelectionDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSizes.radiusL),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSizes.paddingL),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.tune, color: AppColors.accent),
+                const SizedBox(width: AppSizes.paddingS),
+                Text(
+                  '画質を選択',
+                  style: AppTypography.titleMedium.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSizes.paddingS),
+            Text(
+              '画像の品質を選択してください',
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppSizes.paddingL),
+            _QualityOption(
+              quality: _ImageQuality.high,
+              icon: Icons.photo_size_select_large,
+            ),
+            const SizedBox(height: AppSizes.paddingS),
+            _QualityOption(
+              quality: _ImageQuality.standard,
+              icon: Icons.photo_size_select_actual,
+              isRecommended: true,
+            ),
+            const SizedBox(height: AppSizes.paddingS),
+            _QualityOption(
+              quality: _ImageQuality.fast,
+              icon: Icons.photo_size_select_small,
+            ),
+            const SizedBox(height: AppSizes.paddingM),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 画質オプション
+class _QualityOption extends StatelessWidget {
+  const _QualityOption({
+    required this.quality,
+    required this.icon,
+    this.isRecommended = false,
+  });
+
+  final _ImageQuality quality;
+  final IconData icon;
+  final bool isRecommended;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.cardBackground,
+      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          Navigator.pop(context, quality);
+        },
+        borderRadius: BorderRadius.circular(AppSizes.radiusM),
+        child: Container(
+          padding: const EdgeInsets.all(AppSizes.paddingM),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            border: isRecommended
+                ? Border.all(color: AppColors.accent, width: 2)
+                : null,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusS),
+                ),
+                child: Icon(icon, color: AppColors.accent, size: 22),
+              ),
+              const SizedBox(width: AppSizes.paddingM),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          quality.label,
+                          style: AppTypography.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (isRecommended) ...[
+                          const SizedBox(width: AppSizes.paddingS),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.accent.withValues(alpha: 0.15),
+                              borderRadius:
+                                  BorderRadius.circular(AppSizes.radiusS),
+                            ),
+                            child: Text(
+                              'おすすめ',
+                              style: AppTypography.caption.copyWith(
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    Text(
+                      quality.description,
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: AppColors.textSecondary,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// メンバー追加ダイアログ（確定済みプランから）
 class _AddMemberFromViewDialog extends ConsumerStatefulWidget {
   const _AddMemberFromViewDialog({required this.tripId});
@@ -1825,14 +2343,22 @@ class _AddMemberFromViewDialogState
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSizes.radiusL),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSizes.paddingL),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (child, animation) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-          child: _isSuccess ? _buildSuccessState() : _buildInputState(),
+      insetPadding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSizes.paddingL),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            child: _isSuccess ? _buildSuccessState() : _buildInputState(),
+          ),
         ),
       ),
     );

@@ -4,12 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trimee/core/constants/app_colors.dart';
 import 'package:trimee/core/constants/app_sizes.dart';
-import 'package:trimee/core/constants/app_typography.dart';
 import 'package:trimee/shared/models/chat_model.dart';
 import 'package:trimee/shared/services/chat_service.dart';
 import 'package:trimee/shared/providers/firebase_providers.dart';
 
-/// チャット＆リアクションオーバーレイ
+/// リアクションオーバーレイ
 class ChatOverlay extends ConsumerStatefulWidget {
   const ChatOverlay({required this.tripId, required this.child, super.key});
 
@@ -22,9 +21,8 @@ class ChatOverlay extends ConsumerStatefulWidget {
 
 class _ChatOverlayState extends ConsumerState<ChatOverlay>
     with TickerProviderStateMixin {
-  bool _isChatOpen = false;
-  final TextEditingController _textController = TextEditingController();
   final List<_FloatingReaction> _reactions = [];
+  bool _isExpanded = false;
 
   // ドラッグ可能な位置
   Offset? _position;
@@ -33,7 +31,6 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
   // 導入アニメーション用
   late AnimationController _introController;
   late Animation<double> _introScaleAnimation;
-  bool _showIntroTooltip = true;
 
   @override
   void initState() {
@@ -53,31 +50,26 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
       if (mounted) {
         _introController.forward();
         HapticFeedback.mediumImpact();
-
-        // 数秒後にツールチップを消す
-        Future.delayed(const Duration(seconds: 5), () {
-          if (mounted) {
-            setState(() => _showIntroTooltip = false);
-          }
-        });
       }
     });
   }
 
   @override
   void dispose() {
-    _textController.dispose();
     _introController.dispose();
+    for (final r in _reactions) {
+      r.controller.dispose();
+    }
     super.dispose();
   }
 
-  // 初期位置を計算 (右下、ナビゲーションの上)
+  // 初期位置を計算 (中央下)
   Offset _getInitialPosition(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     final padding = MediaQuery.of(context).padding;
     return Offset(
-      screenSize.width / 2 - 24, // 中央（ボタン幅48の半分を引く）
-      screenSize.height - padding.bottom - 100, // 下端から少し上
+      screenSize.width / 2 - 24,
+      screenSize.height - padding.bottom - 100,
     );
   }
 
@@ -86,22 +78,15 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
       _reactions.add(
         _FloatingReaction(
           emoji: emoji,
-          startPosition: Random().nextDouble() * 0.8 + 0.1, // 画面幅の10%〜90%の位置
+          startPosition: Random().nextDouble() * 0.8 + 0.1,
           controller: AnimationController(
               duration: const Duration(seconds: 2),
               vsync: this,
             )
-            ..forward().then((_) {
-              _removeReaction(emoji); // 修正: インスタンス管理が必要だが一旦簡易実装
-            }),
+            ..forward(),
         ),
       );
     });
-  }
-
-  void _removeReaction(String emoji) {
-    // 実際には特定のアニメーションが完了したものを削除する必要があります
-    // ここでは簡易的に古いものを削除するロジックにするか、AnimationControllerのlistenerで削除する
   }
 
   void _sendReaction(String emoji) {
@@ -112,29 +97,12 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
           content: emoji,
           type: MessageType.reaction,
         );
-    // 自分の画面でも表示
     _addReaction(emoji);
-  }
-
-  void _sendMessage() {
-    final text = _textController.text.trim();
-    if (text.isEmpty) return;
-
-    ref
-        .read(chatControllerProvider.notifier)
-        .sendMessage(
-          tripId: widget.tripId,
-          content: text,
-          type: MessageType.text,
-        );
-    _textController.clear();
-    // キーボードを閉じる
-    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   @override
   Widget build(BuildContext context) {
-    // セッションがない場合はチャットUIを表示しない
+    // セッションがない場合はリアクションUIを表示しない
     final currentUserId = ref.watch(currentUserIdProvider);
     if (currentUserId == null) {
       return widget.child;
@@ -144,7 +112,6 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
     ref.listen(chatMessagesProvider(widget.tripId), (previous, next) {
       next.whenData((messages) {
         if (previous?.value == null) return;
-        // 新着メッセージを確認
         final newMessages =
             messages
                 .where((m) => !previous!.value!.any((old) => old.id == m.id))
@@ -154,7 +121,7 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
           if (msg.type == MessageType.reaction &&
               msg.senderId != ref.read(currentUserIdProvider)) {
             _addReaction(msg.content);
-            HapticFeedback.lightImpact(); // リアクション受信時もハプティック
+            HapticFeedback.lightImpact();
           }
         }
       });
@@ -164,7 +131,7 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
     final screenSize = MediaQuery.of(context).size;
     _position ??= _getInitialPosition(context);
 
-    // 画面外に出ないように位置を制限（SafeArea考慮）
+    // 画面外に出ないように位置を制限
     final padding = MediaQuery.of(context).padding;
     final buttonSize = 48.0;
     final safeLeft = 0.0;
@@ -188,39 +155,20 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
             reaction: r,
             onComplete: () {
               setState(() {
+                r.controller.dispose();
                 _reactions.remove(r);
               });
             },
           ),
         ),
 
-        // チャットウィンドウ
-        if (_isChatOpen)
-          Positioned(
-            right: AppSizes.paddingM,
-            left: AppSizes.paddingM,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 12,
-            child: _ChatWindow(
-              tripId: widget.tripId,
-              controller: _textController,
-              onSend: _sendMessage,
-              onClose: () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                setState(() => _isChatOpen = false);
-              },
-            ),
-          ),
-
-        // ドラッグ可能なチャットボタン & リアクション
+        // ドラッグ可能なリアクションボタン
         Positioned(
           left: clampedPosition.dx,
           top: clampedPosition.dy,
           child: GestureDetector(
             onPanStart: (_) {
-              setState(() {
-                _isDragging = true;
-                _showIntroTooltip = false; // ドラッグしたらツールチップ消す
-              });
+              setState(() => _isDragging = true);
               HapticFeedback.selectionClick();
             },
             onPanUpdate: (details) {
@@ -241,54 +189,8 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
                   crossAxisAlignment: CrossAxisAlignment.end,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 説明ツールチップ
-                    if (_showIntroTooltip && !_isChatOpen)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0, right: 8.0),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.accent,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.2),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                'みんなとチャット！',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              const Icon(
-                                Icons.waving_hand,
-                                size: 14,
-                                color: Colors.white,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                    // リアクションボタンたち
-                    if (!_isChatOpen && (_isDragging || _showIntroTooltip)) ...[
-                      // ドラッグ中やイントロ中は常に表示（オプションで調整可）
-                    ] else if (!_isChatOpen) ...[
-                      // 通常時は閉じておく、あるいは常に表示するかの仕様次第
-                      // ここではユーザーリクエストに合わせて常に表示に変更
+                    // リアクションボタン（展開時）
+                    if (_isExpanded) ...[
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -320,7 +222,7 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
                       const SizedBox(height: AppSizes.paddingS),
                     ],
 
-                    // チャット開閉ボタン
+                    // リアクション開閉ボタン
                     Container(
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
@@ -335,18 +237,21 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
                         ],
                       ),
                       child: FloatingActionButton(
-                        heroTag: 'chat_toggle',
-                        mini: true, // 少し大きくしてもいいかも？一旦miniのまま
+                        heroTag: 'reaction_toggle',
+                        mini: true,
                         backgroundColor: AppColors.textPrimary,
-                        child: Icon(
-                          _isChatOpen ? Icons.close : Icons.chat_bubble_outline,
-                          color: Colors.white,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: Icon(
+                            _isExpanded
+                                ? Icons.close
+                                : Icons.emoji_emotions_outlined,
+                            key: ValueKey(_isExpanded),
+                            color: Colors.white,
+                          ),
                         ),
                         onPressed: () {
-                          setState(() {
-                            _isChatOpen = !_isChatOpen;
-                            _showIntroTooltip = false;
-                          });
+                          setState(() => _isExpanded = !_isExpanded);
                           HapticFeedback.selectionClick();
                         },
                       ),
@@ -361,8 +266,6 @@ class _ChatOverlayState extends ConsumerState<ChatOverlay>
     );
   }
 }
-
-// ... (remaining classes: _FloatingReaction, _ReactionAnimation, _ChatWindow, _QuickReactionButton)
 
 class _FloatingReaction {
   final String emoji;
@@ -420,7 +323,7 @@ class _ReactionAnimationState extends State<_ReactionAnimation> {
         return Positioned(
           left:
               MediaQuery.of(context).size.width * widget.reaction.startPosition,
-          bottom: 100 + (_yAnimation.value * -1), // 下から上に
+          bottom: 100 + (_yAnimation.value * -1),
           child: Opacity(
             opacity: _opacityAnimation.value,
             child: Text(
@@ -430,190 +333,6 @@ class _ReactionAnimationState extends State<_ReactionAnimation> {
           ),
         );
       },
-    );
-  }
-}
-
-class _ChatWindow extends ConsumerWidget {
-  const _ChatWindow({
-    required this.tripId,
-    required this.controller,
-    required this.onSend,
-    required this.onClose,
-  });
-
-  final String tripId;
-  final TextEditingController controller;
-  final VoidCallback onSend;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final messagesAsync = ref.watch(chatMessagesProvider(tripId));
-    final currentUserId = ref.watch(currentUserIdProvider);
-
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 400),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(AppSizes.radiusL),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 10,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // ヘッダー
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.paddingM,
-              vertical: AppSizes.paddingS,
-            ),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(AppSizes.radiusL),
-              ),
-              border: Border(bottom: BorderSide(color: AppColors.border)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('チャット', style: AppTypography.titleMedium),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: onClose,
-                ),
-              ],
-            ),
-          ),
-
-          // メッセージリスト
-          Expanded(
-            child: messagesAsync.when(
-              data: (messages) {
-                final textMessages =
-                    messages.where((m) => m.type == MessageType.text).toList();
-                if (textMessages.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'まだメッセージはありません',
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.all(AppSizes.paddingM),
-                  itemCount: textMessages.length,
-                  itemBuilder: (context, index) {
-                    final msg = textMessages[index];
-                    final isMe = msg.senderId == currentUserId;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Column(
-                        crossAxisAlignment:
-                            isMe
-                                ? CrossAxisAlignment.end
-                                : CrossAxisAlignment.start,
-                        children: [
-                          // 投稿者名（他人のメッセージのみ）
-                          if (!isMe && msg.senderName != null)
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 2,
-                                left: 4,
-                              ),
-                              child: Text(
-                                msg.senderName!,
-                                style: AppTypography.caption.copyWith(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color:
-                                  isMe
-                                      ? AppColors.accent
-                                      : AppColors.cardBackground,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              msg.content,
-                              style: TextStyle(
-                                color:
-                                    isMe ? Colors.white : AppColors.textPrimary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, _) => Center(child: Text('エラー: $err')),
-            ),
-          ),
-
-          // 入力エリア
-          Container(
-            padding: const EdgeInsets.all(AppSizes.paddingS),
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: AppColors.border)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    decoration: InputDecoration(
-                      hintText: 'メッセージを入力...',
-                      hintStyle: TextStyle(color: AppColors.textSecondary),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppSizes.radiusFull,
-                        ),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: AppColors.background,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      isDense: true,
-                    ),
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => onSend(),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: const Icon(Icons.send_rounded, size: 22),
-                  color: AppColors.accent,
-                  onPressed: onSend,
-                  style: IconButton.styleFrom(
-                    backgroundColor: AppColors.accent.withValues(alpha: 0.1),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -116,6 +116,12 @@ class _NameInputDialogState extends ConsumerState<NameInputDialog> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSizes.radiusL),
       ),
+      insetPadding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
       child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(AppSizes.paddingL),

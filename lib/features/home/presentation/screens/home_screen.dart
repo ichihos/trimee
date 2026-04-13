@@ -195,53 +195,61 @@ class HomeScreen extends ConsumerWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppSizes.radiusL),
           ),
+          insetPadding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
           title: Text('旅に参加する', style: AppTypography.titleMedium),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'メンバーから共有されたトリップIDを入力してください',
-                style: AppTypography.bodySmall.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: AppSizes.paddingM),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                textInputAction: TextInputAction.go,
-                decoration: InputDecoration(
-                  hintText: 'トリップID',
-                  hintStyle: TextStyle(color: AppColors.textSecondary),
-                  filled: true,
-                  fillColor: AppColors.background,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                    borderSide: BorderSide(color: AppColors.border),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                    borderSide: BorderSide(color: AppColors.border),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                    borderSide: BorderSide(color: AppColors.accent),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: AppSizes.paddingM,
-                    vertical: AppSizes.paddingM,
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'メンバーから共有されたトリップIDを入力してください',
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.textSecondary,
                   ),
                 ),
-                onSubmitted: (value) {
-                  final tripId = _extractTripId(value.trim());
-                  if (tripId.isNotEmpty) {
-                    Navigator.pop(ctx);
-                    context.push('/join/$tripId');
-                  }
-                },
-              ),
-            ],
+                const SizedBox(height: AppSizes.paddingM),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.go,
+                  decoration: InputDecoration(
+                    hintText: 'トリップID',
+                    hintStyle: TextStyle(color: AppColors.textSecondary),
+                    filled: true,
+                    fillColor: AppColors.background,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                      borderSide: BorderSide(color: AppColors.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                      borderSide: BorderSide(color: AppColors.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                      borderSide: BorderSide(color: AppColors.accent),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSizes.paddingM,
+                      vertical: AppSizes.paddingM,
+                    ),
+                  ),
+                  onSubmitted: (value) {
+                    final tripId = _extractTripId(value.trim());
+                    if (tripId.isNotEmpty) {
+                      Navigator.pop(ctx);
+                      context.push('/join/$tripId');
+                    }
+                  },
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -917,6 +925,11 @@ class _SettingsSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authStateProvider);
+    final user = authState.valueOrNull;
+    final isGuest = user == null || user.isAnonymous;
+    final email = user?.email;
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.background,
@@ -955,13 +968,61 @@ class _SettingsSheet extends ConsumerWidget {
                     size: 24,
                   ),
                   const SizedBox(width: AppSizes.paddingS),
-                  Text('設定', style: AppTypography.titleMedium),
+                  Text('設定 / アカウント', style: AppTypography.titleMedium),
                 ],
               ),
             ),
 
             const SizedBox(height: AppSizes.paddingM),
             const Divider(height: 1),
+
+            // アカウント情報
+            if (isGuest)
+              _SettingsMenuItem(
+                icon: Icons.person_outline,
+                label: 'ゲストユーザー',
+                trailing: const SizedBox.shrink(),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSizes.paddingL,
+                  vertical: AppSizes.paddingM,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.account_circle,
+                      size: 40,
+                      color: AppColors.accent.withValues(alpha: 0.8),
+                    ),
+                    const SizedBox(width: AppSizes.paddingM),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ログイン中',
+                            style: AppTypography.caption.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          Text(
+                            email?.isNotEmpty == true ? email! : '連携アカウント',
+                            style: AppTypography.bodyMedium.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            if (!isGuest) const Divider(height: 1, indent: 56),
 
             // テーマ設定
             _SettingsMenuItem(

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_strings.dart';
@@ -23,9 +23,9 @@ import '../../../cards/presentation/providers/card_provider.dart';
 import '../../../trip/presentation/providers/trip_provider.dart';
 import '../providers/plan_provider.dart';
 import '../providers/plan_generation_provider.dart';
-import '../widgets/plan_map_view.dart';
 import 'plan_edit_screen.dart';
 import '../../../../shared/widgets/chat_overlay.dart';
+import '../../../../shared/widgets/invite_sheet.dart';
 
 /// プラン確認画面
 class PlanScreen extends ConsumerStatefulWidget {
@@ -49,6 +49,56 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
     // 画面表示後に自動でプラン生成を開始
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _autoGenerateIfNeeded();
+      _listenForEditingPlanChange();
+    });
+  }
+
+  /// editingPlanIdの変化を監視して、全メンバーを編集画面に遷移させる
+  void _listenForEditingPlanChange() {
+    ref.listenManual(tripDetailProvider(widget.tripId), (previous, next) {
+      final prevTrip = previous?.valueOrNull;
+      final nextTrip = next.valueOrNull;
+
+      if (nextTrip == null || !mounted) return;
+
+      // editingPlanIdが新しく設定された場合
+      final prevEditingId = prevTrip?.editingPlanId;
+      final nextEditingId = nextTrip.editingPlanId;
+
+      if (prevEditingId != nextEditingId && nextEditingId != null && nextEditingId.isNotEmpty) {
+        // プラン一覧から該当のプランを取得
+        final plansAsync = ref.read(tripPlansProvider(widget.tripId));
+        final plans = plansAsync.valueOrNull;
+
+        if (plans != null) {
+          final targetPlan = plans.where((p) => p.id == nextEditingId).firstOrNull;
+          if (targetPlan != null) {
+            // 編集画面へ遷移（ローカルナビゲーションを使わず、画面を置き換え）
+            Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) =>
+                    PlanEditScreen(tripId: widget.tripId, plan: targetPlan),
+                transitionDuration: const Duration(milliseconds: 300),
+                reverseTransitionDuration: const Duration(milliseconds: 250),
+                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                  return SlideTransition(
+                    position: Tween<Offset>(
+                          begin: const Offset(0.0, 0.3),
+                          end: Offset.zero,
+                        )
+                        .chain(CurveTween(curve: Curves.easeOutCubic))
+                        .animate(animation),
+                    child: FadeTransition(
+                      opacity: CurveTween(curve: Curves.easeOut).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+              ),
+            );
+          }
+        }
+      }
     });
   }
 
@@ -97,7 +147,10 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
           child: Column(
             children: [
               // ヘッダー
-              _PlanHeader(onBack: () => context.go('/trip/${widget.tripId}')),
+              _PlanHeader(
+                onBack: () => context.go('/trip/${widget.tripId}'),
+                onInvite: () => _showInviteSheet(context),
+              ),
 
               // メインコンテンツ
               Expanded(child: _buildMainContent(plansAsync)),
@@ -192,22 +245,8 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
             ),
           ),
 
-          // タイトル（PageView外に配置して重なりを防止）
-          if (_currentPage < displayPlans.length)
-            _SlidingPlanTitle(plan: displayPlans[_currentPage])
-          else if (showLoadingCard && _currentPage == streamingPlans.length)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: AppSizes.paddingS),
-              child: Text(
-                '生成中...',
-                style: AppTypography.titleMedium.copyWith(
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            )
-          else
-            const SizedBox(height: 50),
+          // ページインジケーターとカード間の余白
+          const SizedBox(height: AppSizes.paddingS),
 
           const SizedBox(height: AppSizes.paddingXS),
 
@@ -330,11 +369,8 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
               ),
             ),
 
-            // タイトル（PageView外に配置して重なりを防止）
-            if (_currentPage < plans.length)
-              _SlidingPlanTitle(plan: plans[_currentPage])
-            else
-              const SizedBox(height: 50),
+            // ページインジケーターとカード間の余白
+            const SizedBox(height: AppSizes.paddingS),
 
             const SizedBox(height: AppSizes.paddingXS),
 
@@ -399,14 +435,18 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
       editPlan = plan.copyWith(id: planId);
     }
 
-    // 編集中プランIDを設定（確定はせず、編集状態として保存）
+    // 編集中プランIDを設定（これにより全メンバーが自動的に編集画面に遷移）
     await ref
         .read(planControllerProvider.notifier)
         .setEditingPlanId(tripId: widget.tripId, planId: editPlan.id);
 
-    // 編集画面へ遷移
-    if (context.mounted) {
-      Navigator.of(context).push(
+    // リスナーが自動的に遷移するため、明示的なナビゲーションは不要
+    // ただし、念のため少し待ってから確認
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // まだ画面が遷移していない場合のみ、手動で遷移
+    if (context.mounted && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder:
               (context, animation, secondaryAnimation) =>
@@ -534,13 +574,22 @@ class _PlanScreenState extends ConsumerState<PlanScreen>
       }
     }
   }
+
+  void _showInviteSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => InviteSheet(tripId: widget.tripId),
+    );
+  }
 }
 
 /// ヘッダー
 class _PlanHeader extends StatelessWidget {
-  const _PlanHeader({required this.onBack});
+  const _PlanHeader({required this.onBack, required this.onInvite});
 
   final VoidCallback onBack;
+  final VoidCallback onInvite;
 
   @override
   Widget build(BuildContext context) {
@@ -577,63 +626,25 @@ class _PlanHeader extends StatelessWidget {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
 
-/// スライド用プランタイトル
-class _SlidingPlanTitle extends StatelessWidget {
-  const _SlidingPlanTitle({required this.plan});
-
-  final PlanModel plan;
-
-  @override
-  Widget build(BuildContext context) {
-    final icon = _getPlanTypeIcon(plan.title);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: AppSizes.paddingS),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // アイコン
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: AppIcon(type: icon, size: 20, showBackground: false),
-          ),
-          const SizedBox(width: AppSizes.paddingS),
-
-          // タイトル
-          Flexible(
-            child: Text(
-              plan.title,
-              style: AppTypography.titleMedium.copyWith(
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.bold,
+          // 招待ボタン
+          IconButton(
+            onPressed: onInvite,
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.cardBackground,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSizes.radiusM),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
       ),
     );
   }
-
-  AppIconType _getPlanTypeIcon(String title) {
-    if (title.contains('アクティブ')) return AppIconType.active;
-    if (title.contains('のんびり')) return AppIconType.relax;
-    if (title.contains('コスパ')) return AppIconType.budget;
-    return AppIconType.plan;
-  }
-
 }
+
+
 
 /// アニメーション付きプランカード
 class _AnimatedPlanCard extends ConsumerStatefulWidget {
@@ -659,7 +670,6 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
-  bool _isMapView = false;
 
   @override
   void initState() {
@@ -695,6 +705,17 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
 
   @override
   Widget build(BuildContext context) {
+    final plan = widget.plan;
+    final tripAsync = ref.watch(tripDetailProvider(widget.tripId));
+    final startDate = tripAsync.valueOrNull?.startDate;
+
+    // 日ごとにアイテムをグループ化してざっくり行程を作成
+    final itemsByDay = <int, List<PlanItem>>{};
+    for (final item in plan.items) {
+      itemsByDay.putIfAbsent(item.day, () => []).add(item);
+    }
+    final days = itemsByDay.keys.toList()..sort();
+
     return AnimatedBuilder(
       animation: _scaleAnimation,
       builder:
@@ -710,162 +731,143 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ヘッダー（コンパクト化）
-              _PlanCardHeader(plan: widget.plan),
-
-              // 地図/リスト切り替え
-              if (widget.plan.items.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSizes.paddingM,
-                  ),
-                  child: Container(
-                    height: 48,
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF5F5F5), // Light background
-                      borderRadius: BorderRadius.circular(AppSizes.radiusFull),
-                    ),
-                    child: Stack(
-                      children: [
-                        // Active Indicator
-                        AnimatedAlign(
-                          alignment:
-                              _isMapView
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeInOut,
-                          child: FractionallySizedBox(
-                            widthFactor: 0.5,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(
-                                  AppSizes.radiusFull,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.08),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        // Tab Buttons
-                        Row(
-                          children: [
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () => setState(() => _isMapView = false),
-                                behavior: HitTestBehavior.opaque,
-                                child: Center(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.format_list_bulleted_rounded,
-                                        size: 20,
-                                        color:
-                                            !_isMapView
-                                                ? AppColors.textPrimary
-                                                : AppColors.textSecondary,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'リスト',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color:
-                                              !_isMapView
-                                                  ? AppColors.textPrimary
-                                                  : AppColors.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () => setState(() => _isMapView = true),
-                                behavior: HitTestBehavior.opaque,
-                                child: Center(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.map_outlined,
-                                        size: 20,
-                                        color:
-                                            _isMapView
-                                                ? AppColors.textPrimary
-                                                : AppColors.textSecondary,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        '地図',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color:
-                                              _isMapView
-                                                  ? AppColors.textPrimary
-                                                  : AppColors.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              // タイムラインまたは地図ビュー
-              Expanded(
-                child:
-                    widget.plan.items.isEmpty
-                        ? Center(
-                          child: Text(
-                            'アイテムがありません',
-                            style: TextStyle(color: AppColors.textSecondary),
-                          ),
-                        )
-                        : _isMapView
-                        ? Padding(
-                          padding: const EdgeInsets.all(AppSizes.paddingS),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(
-                              AppSizes.radiusM,
-                            ),
-                            child: PlanMapView(
-                              items: widget.plan.items,
-                              liteMode: true,
-                            ),
-                          ),
-                        )
-                        : Builder(
-                          builder: (context) {
-                            final tripAsync = ref.watch(
-                              tripDetailProvider(widget.tripId),
-                            );
-                            final startDate = tripAsync.valueOrNull?.startDate;
-                            return _DayGroupedTimeline(
-                              items: widget.plan.items,
-                              startDate: startDate,
-                            );
-                          },
-                        ),
+              // ヘッダー（タイトル + サマリ統合）
+              _PlanCardHeader(
+                plan: plan,
+                spotCount: plan.items.length,
+                dayCount: days.length,
               ),
 
+              // ざっくり行程（タイムライン風）
+              Expanded(
+                child: plan.items.isEmpty
+                    ? Center(
+                        child: Text(
+                          'アイテムがありません',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSizes.paddingM,
+                          vertical: AppSizes.paddingS,
+                        ),
+                        children: days.map((day) {
+                          final dayItems = itemsByDay[day]!
+                            ..sort((a, b) => a.time.compareTo(b.time));
+
+                          String? dateText;
+                          if (startDate != null) {
+                            final date = startDate.add(Duration(days: day - 1));
+                            const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
+                            dateText = '${date.month}/${date.day}（${weekdays[date.weekday - 1]}）';
+                          }
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: AppSizes.paddingS),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // 日付ヘッダー
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          gradient: const LinearGradient(
+                                            colors: [AppColors.accent, Color(0xFFD4896E)],
+                                          ),
+                                          borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+                                        ),
+                                        child: Text(
+                                          '$day日目',
+                                          style: AppTypography.labelSmall.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      if (dateText != null) ...[
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          dateText,
+                                          style: AppTypography.caption.copyWith(
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                // タイムラインスポット一覧
+                                ...List.generate(dayItems.length, (i) {
+                                  final item = dayItems[i];
+                                  final isLast = i == dayItems.length - 1;
+                                  return IntrinsicHeight(
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      children: [
+                                        // タイムラインドット＋コネクタ
+                                        SizedBox(
+                                          width: 20,
+                                          child: Column(
+                                            children: [
+                                              Container(
+                                                width: 8,
+                                                height: 8,
+                                                margin: const EdgeInsets.only(top: 6),
+                                                decoration: BoxDecoration(
+                                                  color: AppColors.accent,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                              ),
+                                              if (!isLast)
+                                                Expanded(
+                                                  child: Container(
+                                                    width: 1.5,
+                                                    color: AppColors.accent.withValues(alpha: 0.3),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        // スポット名
+                                        Expanded(
+                                          child: Padding(
+                                            padding: EdgeInsets.only(
+                                              bottom: isLast ? 0 : 6,
+                                            ),
+                                            child: Text(
+                                              item.location,
+                                              style: AppTypography.bodySmall.copyWith(
+                                                fontWeight: FontWeight.w500,
+                                                color: item.isPlaceholder
+                                                    ? AppColors.textSecondary
+                                                    : AppColors.textPrimary,
+                                                height: 1.5,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+              ),
+
+              // ボタンエリア
               Container(
                 padding: const EdgeInsets.all(AppSizes.paddingM),
                 decoration: BoxDecoration(
@@ -876,7 +878,46 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
                 ),
                 child: Column(
                   children: [
-                    // このプランにするボタン（パルスアニメーション付き）
+                    // このプランを詳しく見るボタン
+                    GestureDetector(
+                      onTap: () {
+                        HapticFeedback.lightImpact();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => _PlanDetailFullScreen(
+                              plan: plan,
+                              tripId: widget.tripId,
+                              startDate: startDate,
+                              onSelectPlan: widget.onSelectPlan,
+                            ),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: AppColors.cardBackground,
+                          borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                          border: Border.all(color: AppColors.accent),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.fullscreen_rounded, size: 18, color: AppColors.accent),
+                            const SizedBox(width: 6),
+                            Text(
+                              'このプランを詳しく見る',
+                              style: AppTypography.labelMedium.copyWith(
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSizes.paddingS),
+                    // このプランをベースにするボタン
                     PulseAnimation(
                       minScale: 0.98,
                       maxScale: 1.02,
@@ -884,7 +925,7 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
                       child: ScaleTapFeedback(
                         onTap: widget.onSelectPlan,
                         child: Container(
-                          height: 48, // Slightly taller
+                          height: 48,
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
                               colors: [AppColors.accent, Color(0xFFD4896E)],
@@ -924,19 +965,22 @@ class _AnimatedPlanCardState extends ConsumerState<_AnimatedPlanCard>
   }
 }
 
-/// プランカードヘッダー（コンパクト版）
+/// プランカードヘッダー（タイトル + サマリ統合）
 class _PlanCardHeader extends StatelessWidget {
-  const _PlanCardHeader({required this.plan});
+  const _PlanCardHeader({
+    required this.plan,
+    required this.spotCount,
+    required this.dayCount,
+  });
 
   final PlanModel plan;
+  final int spotCount;
+  final int dayCount;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSizes.paddingM,
-        vertical: AppSizes.paddingS,
-      ),
+      padding: const EdgeInsets.all(AppSizes.paddingM),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -947,31 +991,86 @@ class _PlanCardHeader extends StatelessWidget {
           top: Radius.circular(AppSizes.radiusL),
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: AppIcon(
+                  type: _getPlanTypeIcon(plan.title),
+                  size: 20,
+                  iconColor: Colors.white,
+                  showBackground: false,
+                ),
+              ),
+              const SizedBox(width: AppSizes.paddingS),
+              Expanded(
+                child: Text(
                   plan.title,
-                  style: AppTypography.titleSmall.copyWith(
+                  style: AppTypography.titleMedium.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                   ),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (plan.description != null)
-                  Text(
-                    plan.description!,
-                    style: AppTypography.caption.copyWith(
-                      color: Colors.white.withValues(alpha: 0.9),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSizes.paddingS),
+          // サマリチップ（ヘッダー内に統合）
+          Row(
+            children: [
+              _HeaderChip(icon: Icons.place_outlined, label: '$spotCountスポット'),
+              const SizedBox(width: AppSizes.paddingS),
+              _HeaderChip(icon: Icons.calendar_today_outlined, label: '$dayCount日間'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  AppIconType _getPlanTypeIcon(String title) {
+    if (title.contains('アクティブ')) return AppIconType.active;
+    if (title.contains('のんびり')) return AppIconType.relax;
+    if (title.contains('コスパ')) return AppIconType.budget;
+    return AppIconType.plan;
+  }
+}
+
+/// ヘッダー内のチップ（白半透明スタイル）
+class _HeaderChip extends StatelessWidget {
+  const _HeaderChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: Colors.white),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: AppTypography.labelSmall.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
             ),
           ),
         ],
@@ -981,351 +1080,6 @@ class _PlanCardHeader extends StatelessWidget {
 }
 
 /// タイムラインアイテム
-class _TimelineItem extends StatefulWidget {
-  const _TimelineItem({
-    required this.item,
-    required this.isFirst,
-    required this.isLast,
-    required this.index,
-  });
-
-  final PlanItem item;
-  final bool isFirst;
-  final bool isLast;
-  final int index;
-
-  @override
-  State<_TimelineItem> createState() => _TimelineItemState();
-}
-
-class _TimelineItemState extends State<_TimelineItem>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fadeAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 400),
-      vsync: this,
-    );
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-
-    Future.delayed(Duration(milliseconds: widget.index * 100), () {
-      if (mounted) _controller.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // タイムライン
-            SizedBox(
-              width: 60,
-              child: Column(
-                children: [
-                  // 時刻
-                  Text(
-                    widget.item.time,
-                    style: AppTypography.timeStyle.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (widget.item.durationMinutes > 0)
-                    Text(
-                      '${widget.item.durationMinutes}分',
-                      style: AppTypography.caption.copyWith(
-                        fontSize: 10,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            // ドットと線
-            SizedBox(
-              width: 24,
-              child: Column(
-                children: [
-                  // 上の線
-                  if (!widget.isFirst)
-                    Expanded(
-                      child: Container(width: 2, color: AppColors.border),
-                    ),
-                  // ドット
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: AppColors.accent,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: AppColors.cardBackground,
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                  // 下の線
-                  if (!widget.isLast)
-                    Expanded(
-                      child: Container(width: 2, color: AppColors.border),
-                    ),
-                ],
-              ),
-            ),
-
-            const SizedBox(width: AppSizes.paddingS),
-
-            // コンテンツ
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: AppSizes.paddingM),
-                child: Material(
-                  color: AppColors.background,
-                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                    onTap: () => _launchSearch(widget.item.location),
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppSizes.paddingM),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  widget.item.location,
-                                  style: AppTypography.bodyMedium.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                    decoration: TextDecoration.underline,
-                                    decorationColor: AppColors.textSecondary
-                                        .withValues(alpha: 0.5),
-                                  ),
-                                ),
-                              ),
-                              SizedBox(width: 4),
-                              Icon(
-                                Icons.search,
-                                size: 16,
-                                color: AppColors.textSecondary,
-                              ),
-                            ],
-                          ),
-                          if (widget.item.notes != null) ...[
-                            const SizedBox(height: AppSizes.paddingXS),
-                            Text(
-                              widget.item.notes!,
-                              style: AppTypography.caption,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _launchSearch(String keyword) async {
-    try {
-      final query = Uri.encodeComponent(keyword);
-      final url = Uri.parse('https://www.google.com/search?q=$query');
-      if (await canLaunchUrl(url)) {
-        HapticFeedback.lightImpact();
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      debugPrint('Error launching search: $e');
-    }
-  }
-}
-
-/// 日付でグループ化されたタイムライン
-class _DayGroupedTimeline extends StatelessWidget {
-  const _DayGroupedTimeline({required this.items, this.startDate});
-
-  final List<PlanItem> items;
-  final DateTime? startDate;
-
-  @override
-  Widget build(BuildContext context) {
-    // 日付でグループ化
-    final groupedItems = <int, List<MapEntry<int, PlanItem>>>{};
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      final day = item.day;
-      groupedItems.putIfAbsent(day, () => []);
-      groupedItems[day]!.add(MapEntry(i, item));
-    }
-
-    final days = groupedItems.keys.toList()..sort();
-    final isMultiDay = days.length > 1 || (days.isNotEmpty && days.first > 1);
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(AppSizes.paddingM),
-      itemCount: _calculateTotalCount(groupedItems, days, isMultiDay),
-      itemBuilder: (context, index) {
-        return _buildItemAtIndex(index, groupedItems, days, isMultiDay);
-      },
-    );
-  }
-
-  int _calculateTotalCount(
-    Map<int, List<MapEntry<int, PlanItem>>> groupedItems,
-    List<int> days,
-    bool isMultiDay,
-  ) {
-    if (!isMultiDay) return items.length;
-    // 日付ヘッダー数 + アイテム数
-    return days.length + items.length;
-  }
-
-  Widget _buildItemAtIndex(
-    int index,
-    Map<int, List<MapEntry<int, PlanItem>>> groupedItems,
-    List<int> days,
-    bool isMultiDay,
-  ) {
-    if (!isMultiDay) {
-      return _TimelineItem(
-        item: items[index],
-        isFirst: index == 0,
-        isLast: index == items.length - 1,
-        index: index,
-      );
-    }
-
-    // 複数日の場合は日付ヘッダーを含めて表示
-    var currentIndex = 0;
-    for (var dayIndex = 0; dayIndex < days.length; dayIndex++) {
-      final day = days[dayIndex];
-      final dayItems = groupedItems[day]!;
-
-      // 日付ヘッダーのインデックス
-      if (index == currentIndex) {
-        return _DayHeader(day: day, startDate: startDate);
-      }
-      currentIndex++;
-
-      // この日のアイテム
-      for (var itemIndex = 0; itemIndex < dayItems.length; itemIndex++) {
-        if (index == currentIndex) {
-          final entry = dayItems[itemIndex];
-          final isFirstInDay = itemIndex == 0;
-          final isLastInDay = itemIndex == dayItems.length - 1;
-          final isLastOverall = dayIndex == days.length - 1 && isLastInDay;
-
-          return _TimelineItem(
-            item: entry.value,
-            isFirst: isFirstInDay,
-            isLast: isLastOverall,
-            index: entry.key,
-          );
-        }
-        currentIndex++;
-      }
-    }
-
-    return const SizedBox.shrink();
-  }
-}
-
-/// 日付ヘッダー
-class _DayHeader extends StatelessWidget {
-  const _DayHeader({required this.day, this.startDate});
-
-  final int day;
-  final DateTime? startDate;
-
-  @override
-  Widget build(BuildContext context) {
-    // 実際の日付を計算
-    String? dateText;
-    if (startDate != null) {
-      final date = startDate!.add(Duration(days: day - 1));
-      dateText = '${date.month}/${date.day}（${_weekdayName(date.weekday)}）';
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(
-        top: AppSizes.paddingM,
-        bottom: AppSizes.paddingS,
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSizes.paddingM,
-              vertical: AppSizes.paddingXS,
-            ),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [AppColors.accent, Color(0xFFD4896E)],
-              ),
-              borderRadius: BorderRadius.circular(AppSizes.radiusFull),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.calendar_today, size: 14, color: Colors.white),
-                const SizedBox(width: 6),
-                Text(
-                  '$day日目',
-                  style: AppTypography.labelMedium.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (dateText != null) ...[
-                  const SizedBox(width: 6),
-                  Text(
-                    dateText,
-                    style: AppTypography.caption.copyWith(
-                      color: Colors.white.withValues(alpha: 0.9),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: AppSizes.paddingS),
-          Expanded(child: Container(height: 1, color: AppColors.border)),
-        ],
-      ),
-    );
-  }
-
-  String _weekdayName(int weekday) {
-    const names = ['月', '火', '水', '木', '金', '土', '日'];
-    return names[weekday - 1];
-  }
-}
-
 /// リアルタイム生成ビュー（アイテムが順次表示される）
 class _RealTimeGenerationView extends StatelessWidget {
   const _RealTimeGenerationView({
@@ -1572,7 +1326,7 @@ class _RealTimeItemCardState extends State<_RealTimeItemCard>
           child: Row(
             children: [
               // 時間
-              Container(
+              SizedBox(
                 width: 50,
                 child: Text(
                   widget.item.time,
@@ -2888,6 +2642,324 @@ class _OptionButton extends StatelessWidget {
           ),
           elevation: 0,
         ),
+      ),
+    );
+  }
+}
+
+
+/// プラン詳細全画面表示
+class _PlanDetailFullScreen extends ConsumerWidget {
+  const _PlanDetailFullScreen({
+    required this.plan,
+    required this.tripId,
+    required this.onSelectPlan,
+    this.startDate,
+  });
+
+  final PlanModel plan;
+  final String tripId;
+  final DateTime? startDate;
+  final VoidCallback onSelectPlan;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 日ごとにアイテムをグループ化
+    final itemsByDay = <int, List<PlanItem>>{};
+    for (final item in plan.items) {
+      itemsByDay.putIfAbsent(item.day, () => []).add(item);
+    }
+    final days = itemsByDay.keys.toList()..sort();
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.accent,
+        foregroundColor: Colors.white,
+        title: Text(
+          plan.title,
+          style: AppTypography.titleMedium.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: Column(
+        children: [
+          // プラン説明
+          if (plan.description != null && plan.description!.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSizes.paddingM),
+              color: AppColors.cardBackground,
+              child: Text(
+                plan.description!,
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                  height: 1.5,
+                ),
+              ),
+            ),
+
+          // タイムライン
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(AppSizes.paddingM),
+              itemCount: days.length,
+              itemBuilder: (context, dayIndex) {
+                final day = days[dayIndex];
+                final dayItems = itemsByDay[day]!
+                  ..sort((a, b) => a.time.compareTo(b.time));
+
+                String? dateText;
+                if (startDate != null) {
+                  final date = startDate!.add(Duration(days: day - 1));
+                  const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
+                  dateText = '${date.month}/${date.day}（${weekdays[date.weekday - 1]}）';
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 日付ヘッダー
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        top: AppSizes.paddingM,
+                        bottom: AppSizes.paddingS,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSizes.paddingM,
+                              vertical: AppSizes.paddingXS,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [AppColors.accent, Color(0xFFD4896E)],
+                              ),
+                              borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.calendar_today, size: 14, color: Colors.white),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '$day日目',
+                                  style: AppTypography.labelMedium.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (dateText != null) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    dateText,
+                                    style: AppTypography.caption.copyWith(
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: AppSizes.paddingS),
+                          Expanded(child: Container(height: 1, color: AppColors.border)),
+                        ],
+                      ),
+                    ),
+
+                    // アイテム一覧
+                    ...dayItems.asMap().entries.map((entry) {
+                      final i = entry.key;
+                      final item = entry.value;
+                      return _DetailTimelineItem(
+                        item: item,
+                        isFirst: i == 0,
+                        isLast: i == dayItems.length - 1 && dayIndex == days.length - 1,
+                      );
+                    }),
+                  ],
+                );
+              },
+            ),
+          ),
+
+          // このプランをベースにするボタン
+          Container(
+            padding: const EdgeInsets.all(AppSizes.paddingM),
+            decoration: BoxDecoration(
+              color: AppColors.cardBackground,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: ScaleTapFeedback(
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onSelectPlan();
+                },
+                child: Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [AppColors.accent, Color(0xFFD4896E)],
+                    ),
+                    borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.accent.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'このプランをベースにする',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 詳細画面用タイムラインアイテム
+class _DetailTimelineItem extends StatelessWidget {
+  const _DetailTimelineItem({
+    required this.item,
+    required this.isFirst,
+    required this.isLast,
+  });
+
+  final PlanItem item;
+  final bool isFirst;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // タイムライン
+          SizedBox(
+            width: 60,
+            child: Column(
+              children: [
+                Text(
+                  item.time,
+                  style: AppTypography.timeStyle.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (item.durationMinutes > 0)
+                  Text(
+                    '${item.durationMinutes}分',
+                    style: AppTypography.caption.copyWith(
+                      fontSize: 10,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // ドットと線
+          SizedBox(
+            width: 24,
+            child: Column(
+              children: [
+                if (!isFirst)
+                  Expanded(
+                    child: Container(width: 2, color: AppColors.border),
+                  ),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: AppColors.accent,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.cardBackground,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                if (!isLast)
+                  Expanded(
+                    child: Container(width: 2, color: AppColors.border),
+                  ),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: AppSizes.paddingS),
+
+          // コンテンツ
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: AppSizes.paddingM),
+              child: Container(
+                padding: const EdgeInsets.all(AppSizes.paddingM),
+                decoration: BoxDecoration(
+                  color: AppColors.cardBackground,
+                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                  border: Border.all(color: AppColors.border.withValues(alpha: 0.5)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.place, size: 16, color: AppColors.accent),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            item.location,
+                            style: AppTypography.bodyMedium.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (item.notes != null && item.notes!.isNotEmpty) ...[
+                      const SizedBox(height: AppSizes.paddingXS),
+                      Text(
+                        item.notes!,
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

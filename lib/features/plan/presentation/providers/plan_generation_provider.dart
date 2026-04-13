@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/models/card_model.dart';
 import '../../../../shared/models/user_profile_model.dart';
@@ -181,9 +182,15 @@ class PlanGenerationNotifier extends StateNotifier<PlanGenerationState> {
             try {
               final planController = _ref.read(planControllerProvider.notifier);
               for (final plan in plans) {
+                final planModel = plan.toPlanModel(_tripId);
+                // 防御的チェック: itemsが空のプランは保存しない
+                if (planModel.items.isEmpty) {
+                  debugPrint('[PlanGeneration] Warning: Skipping plan with empty items: ${planModel.title}');
+                  continue;
+                }
                 await planController.createPlan(
                   tripId: _tripId,
-                  plan: plan.toPlanModel(_tripId),
+                  plan: planModel,
                 );
               }
             } catch (e) {

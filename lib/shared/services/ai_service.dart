@@ -15,16 +15,29 @@ final aiServiceProvider = Provider<AIService>((ref) {
 /// 仕様書に基づき、プラン生成にはPro、代弁AIにはFlashを使用
 class AIService {
   // Gemini Flash（低コスト・高速）- 代弁AI、サジェスト用
-  // 利用可能なモデル: gemini-3-flash, gemini-2.0-flash-exp, gemini-1.5-flash
   GenerativeModel get _flashModel => FirebaseAI.vertexAI(
     location: 'global',
   ).generativeModel(model: 'gemini-3-flash-preview');
 
   // Gemini Pro（高品質）- プラン生成用
-  // 利用可能なモデル: gemini-3-pro, gemini-2.0-pro-exp, gemini-1.5-pro
   GenerativeModel get _proModel => FirebaseAI.vertexAI(
     location: 'global',
-  ).generativeModel(model: 'gemini-3-pro-preview');
+  ).generativeModel(model: 'gemini-3.1-pro-preview');
+
+  /// デバッグ用: トークン使用量をログ出力
+  static void _logTokenUsage(String method, String model, GenerateContentResponse? response) {
+    final meta = response?.usageMetadata;
+    if (meta == null) {
+      debugPrint('🔢 [$method] ($model) トークン情報なし');
+      return;
+    }
+    debugPrint(
+      '🔢 [$method] ($model) '
+      'prompt: ${meta.promptTokenCount}, '
+      'candidates: ${meta.candidatesTokenCount}, '
+      'total: ${meta.totalTokenCount}',
+    );
+  }
 
   /// プラン生成（複数パターン）- ストリーミング版
   /// 仕様書: アクティブ重視、のんびり、コスパ重視の3パターン
@@ -52,8 +65,10 @@ class AIService {
       final stream = _proModel.generateContentStream([Content.text(prompt)]);
       final buffer = StringBuffer();
       final emittedTypes = <String>{};
+      GenerateContentResponse? lastResponse;
 
       await for (final response in stream) {
+        lastResponse = response;
         final text = response.text ?? '';
         buffer.write(text);
 
@@ -68,6 +83,8 @@ class AIService {
           }
         }
       }
+
+      _logTokenUsage('generatePlansStream', 'pro', lastResponse);
 
       // 最終的に残っているプランがあれば出力
       final finalText = buffer.toString();
@@ -121,8 +138,10 @@ class AIService {
       final buffer = StringBuffer();
       final emittedItems = <String>{}; // "planType:day:time:location"
       final emittedPlanTitles = <String>{};
+      GenerateContentResponse? lastResponse;
 
       await for (final response in stream) {
+        lastResponse = response;
         final text = response.text ?? '';
         buffer.write(text);
 
@@ -228,6 +247,7 @@ class AIService {
         } catch (_) {}
       }
 
+      _logTokenUsage('generateWithRealTimeStream', 'pro', lastResponse);
       yield GenerationEvent.completed(plans: plans);
     } catch (e) {
       debugPrint('AI Real-time Generation Error: $e');
@@ -523,6 +543,7 @@ ${recentMessages.join('\n')}
       final response = await _flashModel.generateContent([
         Content.text(prompt),
       ]);
+      _logTokenUsage('speakForAbsentMember', 'flash', response);
       return response.text ?? '$memberNameの希望を確認中...';
     } catch (e) {
       return '$memberNameの希望を確認中...';
@@ -569,6 +590,7 @@ $cardSummary
 
     try {
       final response = await _flashModel.generateContent([Content.text(prompt)]);
+      _logTokenUsage('analyzeCards', 'flash', response);
       final text = response.text ?? '';
       final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
       if (jsonMatch != null) {
@@ -609,6 +631,7 @@ $cardSummary
       final response = await _flashModel.generateContent([
         Content.text(prompt),
       ]);
+      _logTokenUsage('suggestRelatedPlaces', 'flash', response);
       final text = response.text ?? '';
       return text
           .split('\n')
@@ -677,6 +700,7 @@ $userRequest
       final response = await _flashModel.generateContent([
         Content.text(prompt),
       ]);
+      _logTokenUsage('suggestPlanEdit', 'flash', response);
       final text = response.text ?? '';
 
       // JSONを抽出してパース
@@ -722,6 +746,7 @@ $userRequest
       final response = await _flashModel.generateContent([
         Content.text(prompt),
       ]);
+      _logTokenUsage('getQuickSuggestion', 'flash', response);
       return response.text ?? '回答を生成できませんでした。';
     } catch (e) {
       return '回答を生成できませんでした。';
@@ -752,6 +777,7 @@ $userRequest
       final response = await _flashModel.generateContent([
         Content.text(prompt),
       ]);
+      _logTokenUsage('suggestAdjustment', 'flash', response);
       return response.text ?? '';
     } catch (e) {
       return '';
@@ -911,6 +937,7 @@ $contextText
       final response = await _flashModel.generateContent([
         Content.text(prompt),
       ]);
+      _logTokenUsage('suggestForPlaceholder', 'flash', response);
       final text = response.text ?? '';
 
       // JSONを抽出してパース

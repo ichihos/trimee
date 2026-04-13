@@ -651,14 +651,22 @@ class _AddMemberDialogState extends ConsumerState<_AddMemberDialog> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSizes.radiusL),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSizes.paddingL),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (child, animation) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-          child: _isSuccess ? _buildSuccessState() : _buildInputState(),
+      insetPadding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSizes.paddingL),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            child: _isSuccess ? _buildSuccessState() : _buildInputState(),
+          ),
         ),
       ),
     );

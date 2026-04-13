@@ -402,6 +402,21 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
           textOffset: [0.0, -2.2],
         ),
       );
+      // スポット名ラベル（地図上に表示）
+      await pointManager.create(
+        PointAnnotationOptions(
+          geometry: Point(
+            coordinates: Position(item.longitude!, item.latitude!),
+          ),
+          textField: item.location,
+          textSize: 12.0,
+          textColor: Colors.white.toARGB32(),
+          textHaloColor: Colors.black.toARGB32(),
+          textHaloWidth: 2.0,
+          textOffset: [0.0, 1.8],
+          textMaxWidth: 10.0,
+        ),
+      );
     }
 
     _fitToBounds();
@@ -1367,6 +1382,59 @@ class _AnimatedSpotCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // 地域の特徴タグ（桃鉄風）
+                        Builder(
+                          builder: (context) {
+                            final specialties = _getAreaSpecialties(item.location);
+                            if (specialties.isEmpty) return const SizedBox.shrink();
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: specialties.map((s) {
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          s.color.withValues(alpha: 0.3),
+                                          s.color.withValues(alpha: 0.15),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: s.color.withValues(alpha: 0.5),
+                                        width: 0.5,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          s.emoji,
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          s.label,
+                                          style: TextStyle(
+                                            color: Colors.white.withValues(alpha: 0.9),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            );
+                          },
+                        ),
                         // ノート（あれば）
                         if (item.notes != null && item.notes!.isNotEmpty) ...[
                           const SizedBox(height: 6),
@@ -2197,6 +2265,141 @@ double _bearingBetween(Position from, Position to) {
 String _spotLottieAssetFor(String location) {
   // TODO: スポットタイプ別Lottieファイルが追加されたらここで分岐
   return 'assets/lottie/spot_default.json';
+}
+
+/// 地域の特徴・名産タグ（桃鉄風）
+class _AreaSpecialty {
+  const _AreaSpecialty({required this.emoji, required this.label, required this.color});
+  final String emoji;
+  final String label;
+  final Color color;
+}
+
+List<_AreaSpecialty> _getAreaSpecialties(String location) {
+  final l = location.toLowerCase();
+  final tags = <_AreaSpecialty>[];
+
+  // スポットタイプに基づくタグ
+  if (RegExp(r'神社|寺|temple|shrine').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '⛩️', label: '歴史', color: Color(0xFFE57373)));
+  }
+  if (RegExp(r'城|castle').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🏯', label: '名城', color: Color(0xFFBA68C8)));
+  }
+  if (RegExp(r'公園|garden|park|森').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🌿', label: '自然', color: Color(0xFF81C784)));
+  }
+  if (RegExp(r'山|岳|峠').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '⛰️', label: '絶景', color: Color(0xFF66BB6A)));
+  }
+  if (RegExp(r'海|ビーチ|beach|港|島').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🏖️', label: '海', color: Color(0xFF4FC3F7)));
+  }
+  if (RegExp(r'温泉|spa|風呂').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '♨️', label: '温泉', color: Color(0xFFEF5350)));
+  }
+  if (RegExp(r'レストラン|カフェ|食|グルメ|cafe|restaurant').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍽️', label: 'グルメ', color: Color(0xFFFFB74D)));
+  }
+  if (RegExp(r'ラーメン').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍜', label: 'ラーメン', color: Color(0xFFFF8A65)));
+  }
+  if (RegExp(r'寿司|鮨').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍣', label: '寿司', color: Color(0xFFFF7043)));
+  }
+  if (RegExp(r'美術館|博物館|museum').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🎨', label: 'アート', color: Color(0xFFA1887F)));
+  }
+  if (RegExp(r'水族館').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🐠', label: '水族館', color: Color(0xFF29B6F6)));
+  }
+  if (RegExp(r'動物園').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🦁', label: '動物園', color: Color(0xFFA5D6A7)));
+  }
+  if (RegExp(r'買|ショッピング|モール|shop|market|商店|通り').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🛍️', label: 'お買物', color: Color(0xFFFF8A65)));
+  }
+  if (RegExp(r'ホテル|旅館|inn|hotel|宿').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🏨', label: '宿泊', color: Color(0xFF9575CD)));
+  }
+  if (RegExp(r'駅|station').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🚉', label: '駅', color: Color(0xFF4DB6AC)));
+  }
+  if (RegExp(r'空港|airport').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '✈️', label: '空港', color: Color(0xFF7986CB)));
+  }
+  if (RegExp(r'湖|滝|渓谷|川').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '💧', label: '水辺', color: Color(0xFF4FC3F7)));
+  }
+  if (RegExp(r'展望|タワー|tower|スカイ').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🗼', label: '展望', color: Color(0xFFFFD54F)));
+  }
+  if (RegExp(r'遊園地|テーマパーク|ランド|ワールド').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🎢', label: 'テーマパーク', color: Color(0xFFE040FB)));
+  }
+  if (RegExp(r'酒|ワイン|ビール|brewery|蔵').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍶', label: '名酒', color: Color(0xFFBCAAA4)));
+  }
+
+  // 地域名に基づくタグ（名産品）
+  if (RegExp(r'京都|嵐山|祇園|清水').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍵', label: '抹茶', color: Color(0xFF66BB6A)));
+  }
+  if (RegExp(r'大阪|道頓堀|心斎橋|新世界').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🐙', label: 'たこ焼き', color: Color(0xFFFF7043)));
+  }
+  if (RegExp(r'北海道|札幌|小樽|函館|旭川|富良野').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🦀', label: '海鮮', color: Color(0xFFEF5350)));
+  }
+  if (RegExp(r'沖縄|那覇|石垣|宮古').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🌺', label: '南国', color: Color(0xFFFF8A80)));
+  }
+  if (RegExp(r'福岡|博多|天神').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍜', label: '博多ラーメン', color: Color(0xFFFF8A65)));
+  }
+  if (RegExp(r'広島|宮島').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🦪', label: '牡蠣', color: Color(0xFFBCAAA4)));
+  }
+  if (RegExp(r'金沢|兼六').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍱', label: '加賀料理', color: Color(0xFFFFD54F)));
+  }
+  if (RegExp(r'名古屋|栄|大須').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍤', label: 'えびふりゃー', color: Color(0xFFFF8A65)));
+  }
+  if (RegExp(r'奈良').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🦌', label: '鹿', color: Color(0xFFA1887F)));
+  }
+  if (RegExp(r'神戸|三宮|元町').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🥩', label: '神戸牛', color: Color(0xFFE57373)));
+  }
+  if (RegExp(r'長崎').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍝', label: 'ちゃんぽん', color: Color(0xFFFFB74D)));
+  }
+  if (RegExp(r'仙台').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '👅', label: '牛タン', color: Color(0xFFE57373)));
+  }
+  if (RegExp(r'浅草|東京|渋谷|新宿|秋葉原|銀座').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🗼', label: '都会', color: Color(0xFF7986CB)));
+  }
+  if (RegExp(r'鎌倉|江ノ島').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🏄', label: '湘南', color: Color(0xFF4FC3F7)));
+  }
+  if (RegExp(r'富士|河口湖').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🗻', label: '富士山', color: Color(0xFF90CAF9)));
+  }
+  if (RegExp(r'日光').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🐒', label: '世界遺産', color: Color(0xFFA5D6A7)));
+  }
+  if (RegExp(r'熊本').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🐴', label: '馬刺し', color: Color(0xFFEF5350)));
+  }
+  if (RegExp(r'青森|弘前').hasMatch(l)) {
+    tags.add(const _AreaSpecialty(emoji: '🍎', label: 'りんご', color: Color(0xFFEF5350)));
+  }
+
+  // 最大3つまで
+  if (tags.length > 3) return tags.sublist(0, 3);
+  return tags;
 }
 
 /// 距離に応じたカメラ設定

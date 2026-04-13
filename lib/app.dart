@@ -119,6 +119,7 @@ final _authChangeNotifierProvider = Provider<_AuthChangeNotifier>((ref) {
   ref.listen(isAuthenticatedProvider, (_, __) => notifier.notify());
   ref.listen(isGuestModeProvider, (_, __) => notifier.notify());
   ref.listen(isProfileCompleteProvider, (_, __) => notifier.notify());
+  ref.listen(isProfileLoadingProvider, (_, __) => notifier.notify());
   return notifier;
 });
 
@@ -134,6 +135,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isGuest = ref.read(isGuestModeProvider);
       final hasSession = isAuthenticated || isGuest;
       final isProfileComplete = ref.read(isProfileCompleteProvider);
+      final isProfileLoading = ref.read(isProfileLoadingProvider);
 
       final isWelcomeRoute = state.matchedLocation == '/welcome';
       final isAuthRoute = state.matchedLocation == '/sign-in';
@@ -157,12 +159,14 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       // セッションがあり、プロフィール未完了なら設定画面へ
       // ただし、トリップ/プラン/ホーム関連ルートはスキップ（join経由で名前のみ入力済みの場合）
+      // プロフィール読み込み中はリダイレクトしない（Web リロード時のフラッシュ防止）
       final isHomeRoute = state.matchedLocation == '/';
       final isPlanRoute =
           state.matchedLocation.startsWith('/plan/') ||
           state.uri.path.startsWith('/plan/');
       if (hasSession &&
           !isProfileComplete &&
+          !isProfileLoading &&
           !isProfileSetupRoute &&
           !isAuthRoute &&
           !isTripRoute &&

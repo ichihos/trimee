@@ -161,6 +161,17 @@ final currentUserProfileProvider = StreamProvider<UserProfileModel?>((ref) {
   return ref.watch(userProfileRepositoryProvider).watchProfile(userId);
 });
 
+/// プロフィールがまだ読み込み中かどうか（認証済みユーザー向け）
+final isProfileLoadingProvider = Provider<bool>((ref) {
+  final isGuest = ref.watch(isGuestModeProvider);
+  final isAuthenticated = ref.watch(isAuthenticatedProvider);
+
+  if (isGuest && !isAuthenticated) return false;
+
+  final profileAsync = ref.watch(currentUserProfileProvider);
+  return profileAsync.isLoading;
+});
+
 /// プロフィールが完成しているかどうか
 /// 名前はチームごとに設定するため、年代のみ必須
 final isProfileCompleteProvider = Provider<bool>((ref) {
