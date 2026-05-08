@@ -4,7 +4,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'plan_model.freezed.dart';
 part 'plan_model.g.dart';
 
-/// プランアイテム（1つのスポット）
+/// しおりアイテム（1つのスポット/予定）
 @freezed
 class PlanItem with _$PlanItem {
   const factory PlanItem({
@@ -12,14 +12,10 @@ class PlanItem with _$PlanItem {
     @Default(1) int day,
     required String time,
     required String location,
-    String? cardId,
     String? notes,
     @Default(60) int durationMinutes,
     double? latitude,
     double? longitude,
-
-    /// プレースホルダー（ユーザーが後で埋める項目）
-    @Default(false) bool isPlaceholder,
 
     /// 予約URL
     String? bookingUrl,
@@ -38,7 +34,7 @@ class PlanItem with _$PlanItem {
       _$PlanItemFromJson(json);
 }
 
-/// プランモデル（AIが生成するプラン）
+/// しおりプランモデル
 @freezed
 class PlanModel with _$PlanModel {
   const factory PlanModel({
@@ -46,15 +42,11 @@ class PlanModel with _$PlanModel {
     required String tripId,
     required String title,
     String? description,
-    String? iconUrl,
     @Default([]) List<PlanItem> items,
-    @Default([]) List<String> includedCards,
-    @Default([]) List<String> excludedCards,
-    @Default({}) Map<String, bool> votes,
     required DateTime createdAt,
     DateTime? updatedAt,
 
-    /// 現在編集中のユーザーID
+    /// 現在編集中のユーザーID（共同編集ロック用）
     String? editingBy,
 
     /// 最後に編集したユーザー名
@@ -71,18 +63,13 @@ class PlanModel with _$PlanModel {
         itemsData
             .map((item) => PlanItem.fromJson(item as Map<String, dynamic>))
             .toList();
-    final votesData = data['votes'] as Map<String, dynamic>? ?? {};
 
     return PlanModel(
       id: doc.id,
       tripId: tripId,
       title: data['title'] ?? '',
       description: data['description'],
-      iconUrl: data['iconUrl'],
       items: items,
-      includedCards: List<String>.from(data['includedCards'] ?? []),
-      excludedCards: List<String>.from(data['excludedCards'] ?? []),
-      votes: votesData.map((key, value) => MapEntry(key, value as bool)),
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       updatedAt:
           data['updatedAt'] != null
@@ -99,21 +86,11 @@ extension PlanModelExtension on PlanModel {
     return {
       'title': title,
       'description': description,
-      'iconUrl': iconUrl,
       'items': items.map((item) => item.toJson()).toList(),
-      'includedCards': includedCards,
-      'excludedCards': excludedCards,
-      'votes': votes,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
       'editingBy': editingBy,
       'lastEditedByName': lastEditedByName,
     };
   }
-
-  /// 賛成票の数
-  int get yesVotes => votes.values.where((v) => v).length;
-
-  /// 反対票の数
-  int get noVotes => votes.values.where((v) => !v).length;
 }

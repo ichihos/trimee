@@ -25,14 +25,10 @@ mixin _$PlanItem {
   int get day => throw _privateConstructorUsedError;
   String get time => throw _privateConstructorUsedError;
   String get location => throw _privateConstructorUsedError;
-  String? get cardId => throw _privateConstructorUsedError;
   String? get notes => throw _privateConstructorUsedError;
   int get durationMinutes => throw _privateConstructorUsedError;
   double? get latitude => throw _privateConstructorUsedError;
   double? get longitude => throw _privateConstructorUsedError;
-
-  /// プレースホルダー（ユーザーが後で埋める項目）
-  bool get isPlaceholder => throw _privateConstructorUsedError;
 
   /// 予約URL
   String? get bookingUrl => throw _privateConstructorUsedError;
@@ -66,12 +62,10 @@ abstract class $PlanItemCopyWith<$Res> {
     int day,
     String time,
     String location,
-    String? cardId,
     String? notes,
     int durationMinutes,
     double? latitude,
     double? longitude,
-    bool isPlaceholder,
     String? bookingUrl,
     String? bookingNote,
     bool isBooked,
@@ -98,12 +92,10 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
     Object? day = null,
     Object? time = null,
     Object? location = null,
-    Object? cardId = freezed,
     Object? notes = freezed,
     Object? durationMinutes = null,
     Object? latitude = freezed,
     Object? longitude = freezed,
-    Object? isPlaceholder = null,
     Object? bookingUrl = freezed,
     Object? bookingNote = freezed,
     Object? isBooked = null,
@@ -131,11 +123,6 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
                     ? _value.location
                     : location // ignore: cast_nullable_to_non_nullable
                         as String,
-            cardId:
-                freezed == cardId
-                    ? _value.cardId
-                    : cardId // ignore: cast_nullable_to_non_nullable
-                        as String?,
             notes:
                 freezed == notes
                     ? _value.notes
@@ -156,11 +143,6 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
                     ? _value.longitude
                     : longitude // ignore: cast_nullable_to_non_nullable
                         as double?,
-            isPlaceholder:
-                null == isPlaceholder
-                    ? _value.isPlaceholder
-                    : isPlaceholder // ignore: cast_nullable_to_non_nullable
-                        as bool,
             bookingUrl:
                 freezed == bookingUrl
                     ? _value.bookingUrl
@@ -201,12 +183,10 @@ abstract class _$$PlanItemImplCopyWith<$Res>
     int day,
     String time,
     String location,
-    String? cardId,
     String? notes,
     int durationMinutes,
     double? latitude,
     double? longitude,
-    bool isPlaceholder,
     String? bookingUrl,
     String? bookingNote,
     bool isBooked,
@@ -232,12 +212,10 @@ class __$$PlanItemImplCopyWithImpl<$Res>
     Object? day = null,
     Object? time = null,
     Object? location = null,
-    Object? cardId = freezed,
     Object? notes = freezed,
     Object? durationMinutes = null,
     Object? latitude = freezed,
     Object? longitude = freezed,
-    Object? isPlaceholder = null,
     Object? bookingUrl = freezed,
     Object? bookingNote = freezed,
     Object? isBooked = null,
@@ -265,11 +243,6 @@ class __$$PlanItemImplCopyWithImpl<$Res>
                 ? _value.location
                 : location // ignore: cast_nullable_to_non_nullable
                     as String,
-        cardId:
-            freezed == cardId
-                ? _value.cardId
-                : cardId // ignore: cast_nullable_to_non_nullable
-                    as String?,
         notes:
             freezed == notes
                 ? _value.notes
@@ -290,11 +263,6 @@ class __$$PlanItemImplCopyWithImpl<$Res>
                 ? _value.longitude
                 : longitude // ignore: cast_nullable_to_non_nullable
                     as double?,
-        isPlaceholder:
-            null == isPlaceholder
-                ? _value.isPlaceholder
-                : isPlaceholder // ignore: cast_nullable_to_non_nullable
-                    as bool,
         bookingUrl:
             freezed == bookingUrl
                 ? _value.bookingUrl
@@ -328,12 +296,10 @@ class _$PlanItemImpl implements _PlanItem {
     this.day = 1,
     required this.time,
     required this.location,
-    this.cardId,
     this.notes,
     this.durationMinutes = 60,
     this.latitude,
     this.longitude,
-    this.isPlaceholder = false,
     this.bookingUrl,
     this.bookingNote,
     this.isBooked = false,
@@ -354,8 +320,6 @@ class _$PlanItemImpl implements _PlanItem {
   @override
   final String location;
   @override
-  final String? cardId;
-  @override
   final String? notes;
   @override
   @JsonKey()
@@ -364,11 +328,6 @@ class _$PlanItemImpl implements _PlanItem {
   final double? latitude;
   @override
   final double? longitude;
-
-  /// プレースホルダー（ユーザーが後で埋める項目）
-  @override
-  @JsonKey()
-  final bool isPlaceholder;
 
   /// 予約URL
   @override
@@ -389,7 +348,7 @@ class _$PlanItemImpl implements _PlanItem {
 
   @override
   String toString() {
-    return 'PlanItem(id: $id, day: $day, time: $time, location: $location, cardId: $cardId, notes: $notes, durationMinutes: $durationMinutes, latitude: $latitude, longitude: $longitude, isPlaceholder: $isPlaceholder, bookingUrl: $bookingUrl, bookingNote: $bookingNote, isBooked: $isBooked, bookingImageUrl: $bookingImageUrl)';
+    return 'PlanItem(id: $id, day: $day, time: $time, location: $location, notes: $notes, durationMinutes: $durationMinutes, latitude: $latitude, longitude: $longitude, bookingUrl: $bookingUrl, bookingNote: $bookingNote, isBooked: $isBooked, bookingImageUrl: $bookingImageUrl)';
   }
 
   @override
@@ -402,7 +361,6 @@ class _$PlanItemImpl implements _PlanItem {
             (identical(other.time, time) || other.time == time) &&
             (identical(other.location, location) ||
                 other.location == location) &&
-            (identical(other.cardId, cardId) || other.cardId == cardId) &&
             (identical(other.notes, notes) || other.notes == notes) &&
             (identical(other.durationMinutes, durationMinutes) ||
                 other.durationMinutes == durationMinutes) &&
@@ -410,8 +368,6 @@ class _$PlanItemImpl implements _PlanItem {
                 other.latitude == latitude) &&
             (identical(other.longitude, longitude) ||
                 other.longitude == longitude) &&
-            (identical(other.isPlaceholder, isPlaceholder) ||
-                other.isPlaceholder == isPlaceholder) &&
             (identical(other.bookingUrl, bookingUrl) ||
                 other.bookingUrl == bookingUrl) &&
             (identical(other.bookingNote, bookingNote) ||
@@ -430,12 +386,10 @@ class _$PlanItemImpl implements _PlanItem {
     day,
     time,
     location,
-    cardId,
     notes,
     durationMinutes,
     latitude,
     longitude,
-    isPlaceholder,
     bookingUrl,
     bookingNote,
     isBooked,
@@ -462,12 +416,10 @@ abstract class _PlanItem implements PlanItem {
     final int day,
     required final String time,
     required final String location,
-    final String? cardId,
     final String? notes,
     final int durationMinutes,
     final double? latitude,
     final double? longitude,
-    final bool isPlaceholder,
     final String? bookingUrl,
     final String? bookingNote,
     final bool isBooked,
@@ -486,8 +438,6 @@ abstract class _PlanItem implements PlanItem {
   @override
   String get location;
   @override
-  String? get cardId;
-  @override
   String? get notes;
   @override
   int get durationMinutes;
@@ -495,10 +445,6 @@ abstract class _PlanItem implements PlanItem {
   double? get latitude;
   @override
   double? get longitude;
-
-  /// プレースホルダー（ユーザーが後で埋める項目）
-  @override
-  bool get isPlaceholder;
 
   /// 予約URL
   @override
@@ -534,15 +480,11 @@ mixin _$PlanModel {
   String get tripId => throw _privateConstructorUsedError;
   String get title => throw _privateConstructorUsedError;
   String? get description => throw _privateConstructorUsedError;
-  String? get iconUrl => throw _privateConstructorUsedError;
   List<PlanItem> get items => throw _privateConstructorUsedError;
-  List<String> get includedCards => throw _privateConstructorUsedError;
-  List<String> get excludedCards => throw _privateConstructorUsedError;
-  Map<String, bool> get votes => throw _privateConstructorUsedError;
   DateTime get createdAt => throw _privateConstructorUsedError;
   DateTime? get updatedAt => throw _privateConstructorUsedError;
 
-  /// 現在編集中のユーザーID
+  /// 現在編集中のユーザーID（共同編集ロック用）
   String? get editingBy => throw _privateConstructorUsedError;
 
   /// 最後に編集したユーザー名
@@ -568,11 +510,7 @@ abstract class $PlanModelCopyWith<$Res> {
     String tripId,
     String title,
     String? description,
-    String? iconUrl,
     List<PlanItem> items,
-    List<String> includedCards,
-    List<String> excludedCards,
-    Map<String, bool> votes,
     DateTime createdAt,
     DateTime? updatedAt,
     String? editingBy,
@@ -599,11 +537,7 @@ class _$PlanModelCopyWithImpl<$Res, $Val extends PlanModel>
     Object? tripId = null,
     Object? title = null,
     Object? description = freezed,
-    Object? iconUrl = freezed,
     Object? items = null,
-    Object? includedCards = null,
-    Object? excludedCards = null,
-    Object? votes = null,
     Object? createdAt = null,
     Object? updatedAt = freezed,
     Object? editingBy = freezed,
@@ -631,31 +565,11 @@ class _$PlanModelCopyWithImpl<$Res, $Val extends PlanModel>
                     ? _value.description
                     : description // ignore: cast_nullable_to_non_nullable
                         as String?,
-            iconUrl:
-                freezed == iconUrl
-                    ? _value.iconUrl
-                    : iconUrl // ignore: cast_nullable_to_non_nullable
-                        as String?,
             items:
                 null == items
                     ? _value.items
                     : items // ignore: cast_nullable_to_non_nullable
                         as List<PlanItem>,
-            includedCards:
-                null == includedCards
-                    ? _value.includedCards
-                    : includedCards // ignore: cast_nullable_to_non_nullable
-                        as List<String>,
-            excludedCards:
-                null == excludedCards
-                    ? _value.excludedCards
-                    : excludedCards // ignore: cast_nullable_to_non_nullable
-                        as List<String>,
-            votes:
-                null == votes
-                    ? _value.votes
-                    : votes // ignore: cast_nullable_to_non_nullable
-                        as Map<String, bool>,
             createdAt:
                 null == createdAt
                     ? _value.createdAt
@@ -696,11 +610,7 @@ abstract class _$$PlanModelImplCopyWith<$Res>
     String tripId,
     String title,
     String? description,
-    String? iconUrl,
     List<PlanItem> items,
-    List<String> includedCards,
-    List<String> excludedCards,
-    Map<String, bool> votes,
     DateTime createdAt,
     DateTime? updatedAt,
     String? editingBy,
@@ -726,11 +636,7 @@ class __$$PlanModelImplCopyWithImpl<$Res>
     Object? tripId = null,
     Object? title = null,
     Object? description = freezed,
-    Object? iconUrl = freezed,
     Object? items = null,
-    Object? includedCards = null,
-    Object? excludedCards = null,
-    Object? votes = null,
     Object? createdAt = null,
     Object? updatedAt = freezed,
     Object? editingBy = freezed,
@@ -758,31 +664,11 @@ class __$$PlanModelImplCopyWithImpl<$Res>
                 ? _value.description
                 : description // ignore: cast_nullable_to_non_nullable
                     as String?,
-        iconUrl:
-            freezed == iconUrl
-                ? _value.iconUrl
-                : iconUrl // ignore: cast_nullable_to_non_nullable
-                    as String?,
         items:
             null == items
                 ? _value._items
                 : items // ignore: cast_nullable_to_non_nullable
                     as List<PlanItem>,
-        includedCards:
-            null == includedCards
-                ? _value._includedCards
-                : includedCards // ignore: cast_nullable_to_non_nullable
-                    as List<String>,
-        excludedCards:
-            null == excludedCards
-                ? _value._excludedCards
-                : excludedCards // ignore: cast_nullable_to_non_nullable
-                    as List<String>,
-        votes:
-            null == votes
-                ? _value._votes
-                : votes // ignore: cast_nullable_to_non_nullable
-                    as Map<String, bool>,
         createdAt:
             null == createdAt
                 ? _value.createdAt
@@ -816,19 +702,12 @@ class _$PlanModelImpl implements _PlanModel {
     required this.tripId,
     required this.title,
     this.description,
-    this.iconUrl,
     final List<PlanItem> items = const [],
-    final List<String> includedCards = const [],
-    final List<String> excludedCards = const [],
-    final Map<String, bool> votes = const {},
     required this.createdAt,
     this.updatedAt,
     this.editingBy,
     this.lastEditedByName,
-  }) : _items = items,
-       _includedCards = includedCards,
-       _excludedCards = excludedCards,
-       _votes = votes;
+  }) : _items = items;
 
   factory _$PlanModelImpl.fromJson(Map<String, dynamic> json) =>
       _$$PlanModelImplFromJson(json);
@@ -841,8 +720,6 @@ class _$PlanModelImpl implements _PlanModel {
   final String title;
   @override
   final String? description;
-  @override
-  final String? iconUrl;
   final List<PlanItem> _items;
   @override
   @JsonKey()
@@ -852,39 +729,12 @@ class _$PlanModelImpl implements _PlanModel {
     return EqualUnmodifiableListView(_items);
   }
 
-  final List<String> _includedCards;
-  @override
-  @JsonKey()
-  List<String> get includedCards {
-    if (_includedCards is EqualUnmodifiableListView) return _includedCards;
-    // ignore: implicit_dynamic_type
-    return EqualUnmodifiableListView(_includedCards);
-  }
-
-  final List<String> _excludedCards;
-  @override
-  @JsonKey()
-  List<String> get excludedCards {
-    if (_excludedCards is EqualUnmodifiableListView) return _excludedCards;
-    // ignore: implicit_dynamic_type
-    return EqualUnmodifiableListView(_excludedCards);
-  }
-
-  final Map<String, bool> _votes;
-  @override
-  @JsonKey()
-  Map<String, bool> get votes {
-    if (_votes is EqualUnmodifiableMapView) return _votes;
-    // ignore: implicit_dynamic_type
-    return EqualUnmodifiableMapView(_votes);
-  }
-
   @override
   final DateTime createdAt;
   @override
   final DateTime? updatedAt;
 
-  /// 現在編集中のユーザーID
+  /// 現在編集中のユーザーID（共同編集ロック用）
   @override
   final String? editingBy;
 
@@ -894,7 +744,7 @@ class _$PlanModelImpl implements _PlanModel {
 
   @override
   String toString() {
-    return 'PlanModel(id: $id, tripId: $tripId, title: $title, description: $description, iconUrl: $iconUrl, items: $items, includedCards: $includedCards, excludedCards: $excludedCards, votes: $votes, createdAt: $createdAt, updatedAt: $updatedAt, editingBy: $editingBy, lastEditedByName: $lastEditedByName)';
+    return 'PlanModel(id: $id, tripId: $tripId, title: $title, description: $description, items: $items, createdAt: $createdAt, updatedAt: $updatedAt, editingBy: $editingBy, lastEditedByName: $lastEditedByName)';
   }
 
   @override
@@ -907,17 +757,7 @@ class _$PlanModelImpl implements _PlanModel {
             (identical(other.title, title) || other.title == title) &&
             (identical(other.description, description) ||
                 other.description == description) &&
-            (identical(other.iconUrl, iconUrl) || other.iconUrl == iconUrl) &&
             const DeepCollectionEquality().equals(other._items, _items) &&
-            const DeepCollectionEquality().equals(
-              other._includedCards,
-              _includedCards,
-            ) &&
-            const DeepCollectionEquality().equals(
-              other._excludedCards,
-              _excludedCards,
-            ) &&
-            const DeepCollectionEquality().equals(other._votes, _votes) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt) &&
             (identical(other.updatedAt, updatedAt) ||
@@ -936,11 +776,7 @@ class _$PlanModelImpl implements _PlanModel {
     tripId,
     title,
     description,
-    iconUrl,
     const DeepCollectionEquality().hash(_items),
-    const DeepCollectionEquality().hash(_includedCards),
-    const DeepCollectionEquality().hash(_excludedCards),
-    const DeepCollectionEquality().hash(_votes),
     createdAt,
     updatedAt,
     editingBy,
@@ -967,11 +803,7 @@ abstract class _PlanModel implements PlanModel {
     required final String tripId,
     required final String title,
     final String? description,
-    final String? iconUrl,
     final List<PlanItem> items,
-    final List<String> includedCards,
-    final List<String> excludedCards,
-    final Map<String, bool> votes,
     required final DateTime createdAt,
     final DateTime? updatedAt,
     final String? editingBy,
@@ -990,21 +822,13 @@ abstract class _PlanModel implements PlanModel {
   @override
   String? get description;
   @override
-  String? get iconUrl;
-  @override
   List<PlanItem> get items;
-  @override
-  List<String> get includedCards;
-  @override
-  List<String> get excludedCards;
-  @override
-  Map<String, bool> get votes;
   @override
   DateTime get createdAt;
   @override
   DateTime? get updatedAt;
 
-  /// 現在編集中のユーザーID
+  /// 現在編集中のユーザーID（共同編集ロック用）
   @override
   String? get editingBy;
 

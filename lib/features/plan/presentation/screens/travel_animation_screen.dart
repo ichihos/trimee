@@ -13,8 +13,7 @@ import 'package:trimee/core/constants/app_sizes.dart';
 import 'package:trimee/core/constants/app_typography.dart';
 import 'package:trimee/core/constants/mapbox_config.dart';
 import 'package:trimee/shared/models/plan_model.dart';
-import 'package:trimee/shared/providers/ad_provider.dart';
-import 'package:trimee/shared/services/video_export_service.dart';
+// video_export_service and ad_provider removed - video export disabled
 
 class TravelAnimationScreen extends ConsumerStatefulWidget {
   const TravelAnimationScreen({required this.items, this.planTitle, super.key});
@@ -29,6 +28,9 @@ class TravelAnimationScreen extends ConsumerStatefulWidget {
 
 class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     with TickerProviderStateMixin {
+  // 地図の表示スタイル（すぐ切り替えられるように定数化）
+  static const String mapStyle = MapboxStyles.MAPBOX_STREETS; // MapboxStyles.STANDARD
+
   MapboxMap? _mapboxMap;
   bool _isPlaying = false;
   bool _showIntro = true;
@@ -103,132 +105,20 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   }
 
   Future<void> _checkExportAvailability() async {
-    final available = await VideoExportService.isAvailable();
+    // Video export disabled
     if (mounted) {
-      setState(() => _isExportAvailable = available);
+      setState(() => _isExportAvailable = false);
     }
   }
 
   Future<void> _startExport() async {
     HapticFeedback.mediumImpact();
-    final started = await VideoExportService.startRecording();
-    if (!started || !mounted) return;
-
-    setState(() {
-      _isRecording = true;
-      _showIntro = false;
-      _showOutro = false;
-      _currentStep = 0;
-    });
-
-    // 少し待ってからアニメーション再生開始
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (mounted) _play();
+    // Video export disabled
   }
 
   Future<void> _stopExportAndSave() async {
+    // Video export disabled
     setState(() => _isRecording = false);
-
-    // リワード広告のオプトイン確認
-    if (!kIsWeb) {
-      final shouldShowAd = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppSizes.radiusL),
-          ),
-          title: const Text('動画を保存'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('動画を保存します。広告を視聴することで、開発を支援できます。'),
-              const SizedBox(height: AppSizes.paddingM),
-              Container(
-                padding: const EdgeInsets.all(AppSizes.paddingS),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(AppSizes.radiusS),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.lightbulb_outline,
-                      size: 16,
-                      color: AppColors.accent,
-                    ),
-                    const SizedBox(width: AppSizes.paddingS),
-                    Expanded(
-                      child: Text(
-                        '広告視聴は任意です',
-                        style: AppTypography.caption.copyWith(
-                          color: AppColors.accent,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('広告なしで保存'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).pop(true),
-              icon: const Icon(Icons.play_arrow, size: 18),
-              label: const Text('広告を見る'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
-        ),
-      );
-
-      if (shouldShowAd == true) {
-        // リワード広告を表示
-        final adService = ref.read(adServiceProvider);
-        final rewarded = await adService.showRewardedAd();
-        if (!mounted) return;
-
-        if (rewarded) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('ありがとうございます！'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      } else if (shouldShowAd == null) {
-        // ダイアログがキャンセルされた場合は録画を停止して終了
-        await VideoExportService.stopRecording();
-        return;
-      }
-    }
-
-    // 録画を停止して保存
-    final path = await VideoExportService.stopRecording();
-    if (!mounted) return;
-
-    if (path != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('動画をカメラロールに保存しました'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('動画の保存に失敗しました'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
   }
 
   @override
@@ -354,6 +244,23 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
 
     if (_validItems.isEmpty) return;
 
+    // ルートライン（PolylineAnnotation）- 旅の全体像を示す
+    if (_validItems.length >= 2) {
+      final polylineManager =
+          await _mapboxMap!.annotations.createPolylineAnnotationManager();
+      final routeCoords =
+          _validItems.map((i) => Position(i.longitude!, i.latitude!)).toList();
+      await polylineManager.create(
+        PolylineAnnotationOptions(
+          geometry: LineString(coordinates: routeCoords),
+          lineColor: AppColors.accent.toARGB32(),
+          lineOpacity: 0.45,
+          lineWidth: 2.5,
+          lineJoin: LineJoin.ROUND,
+        ),
+      );
+    }
+
     // スポットマーカー（CircleAnnotation）
     final circleManager =
         await _mapboxMap!.annotations.createCircleAnnotationManager();
@@ -401,21 +308,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
           textHaloWidth: 1.5,
           textOffset: [0.0, -2.2],
         ),
-      );
-      // スポット名ラベル（地図上に表示）
-      await pointManager.create(
-        PointAnnotationOptions(
-          geometry: Point(
-            coordinates: Position(item.longitude!, item.latitude!),
-          ),
-          textField: item.location,
-          textSize: 12.0,
-          textColor: Colors.white.toARGB32(),
-          textHaloColor: Colors.black.toARGB32(),
-          textHaloWidth: 2.0,
-          textOffset: [0.0, 1.8],
-          textMaxWidth: 10.0,
-        ),
+
       );
     }
 
@@ -508,8 +401,8 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     await _mapboxMap!.flyTo(
       CameraOptions(
         center: Point(coordinates: Position(item.longitude!, item.latitude!)),
-        zoom: 15.5,
-        pitch: 55.0,
+        zoom: 12.5,
+        pitch: 35.0,
         bearing:
             step > 0 ? _calculateBearing(_validItems[step - 1], item) : 0.0,
       ),
@@ -562,35 +455,70 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     }
 
     // カメラ設定（距離に応じてズーム・ピッチを変える）
-    final camera = _cameraForTransit(prevItem, item);
-    final cameraDuration = isFirst ? 2500 : 3000;
+    final arrivalCamera = _cameraForArrival(prevItem, item);
 
-    // 最初のスポット以外は地図上に乗り物アイコンを表示して移動
+    // 最初のスポット以外は「引きの画 → 移動 → ズームイン」の3段階
     if (!isFirst && prevItem != null) {
       final travelTime = _estimatedTravelTime(prevItem, item);
       setState(() {
         _isTransiting = true;
         _currentTransitLabel = '${_transitLabel(prevItem, item)} $travelTime';
       });
-      _transitController.duration = Duration(milliseconds: cameraDuration);
-      _transitController.forward(from: 0);
-      _startVehicleAnimation(prevItem, item, cameraDuration);
-    }
 
-    await _mapboxMap!.flyTo(
-      CameraOptions(
-        center: Point(coordinates: Position(item.longitude!, item.latitude!)),
-        zoom: camera.zoom,
-        pitch: camera.pitch,
-        bearing: prevItem != null ? _calculateBearing(prevItem, item) : 0.0,
-      ),
-      MapAnimationOptions(duration: cameraDuration, startDelay: 0),
-    );
+      // Phase 1: 引きの画 - 出発地と目的地が両方見えるズームレベル
+      final transitCamera = await _mapboxMap!.cameraForCoordinatesPadding(
+        [
+          Point(coordinates: Position(prevItem.longitude!, prevItem.latitude!)),
+          Point(coordinates: Position(item.longitude!, item.latitude!)),
+        ],
+        CameraOptions(bearing: _calculateBearing(prevItem, item), pitch: 20.0),
+        MbxEdgeInsets(top: 140, left: 80, bottom: 220, right: 80),
+        null,
+        null,
+      );
+
+      await _mapboxMap!.flyTo(
+        transitCamera,
+        MapAnimationOptions(duration: 1200, startDelay: 0),
+      );
+
+      // 引きの画を1秒味わう
+      await Future.delayed(const Duration(milliseconds: 1000));
+      if (!mounted || !_isPlaying) return;
+
+      // Phase 2: 移動アニメーション（乗り物アイコン付き）
+      const moveDuration = 2500;
+      _transitController.duration = const Duration(milliseconds: moveDuration);
+      _transitController.forward(from: 0);
+      _startVehicleAnimation(prevItem, item, moveDuration);
+
+      await _mapboxMap!.flyTo(
+        CameraOptions(
+          center: Point(coordinates: Position(item.longitude!, item.latitude!)),
+          zoom: arrivalCamera.zoom,
+          pitch: arrivalCamera.pitch,
+          bearing: _calculateBearing(prevItem, item),
+        ),
+        MapAnimationOptions(duration: moveDuration, startDelay: 0),
+      );
+    } else {
+      // 最初のスポット
+      await _mapboxMap!.flyTo(
+        CameraOptions(
+          center: Point(coordinates: Position(item.longitude!, item.latitude!)),
+          zoom: arrivalCamera.zoom,
+          pitch: arrivalCamera.pitch,
+          bearing: 0.0,
+        ),
+        MapAnimationOptions(duration: 2500, startDelay: 0),
+      );
+    }
 
     HapticFeedback.selectionClick();
 
+    final arrivalDelay = isFirst ? 2500 : 2500;
     // カメラ到着後 → 乗り物削除 → Lottie → 間 → カード → 閲覧 → 次へ
-    _animationTimer = Timer(Duration(milliseconds: cameraDuration), () async {
+    _animationTimer = Timer(Duration(milliseconds: arrivalDelay), () async {
       if (!mounted) return;
       await _removeVehicleAnnotation();
 
@@ -690,7 +618,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
           else
             MapWidget(
               key: const ValueKey('mapWidget'),
-              styleUri: MapboxStyles.DARK,
+              styleUri: mapStyle,
               onMapCreated: _onMapCreated,
             ),
 
@@ -1385,52 +1313,64 @@ class _AnimatedSpotCard extends StatelessWidget {
                         // 地域の特徴タグ（桃鉄風）
                         Builder(
                           builder: (context) {
-                            final specialties = _getAreaSpecialties(item.location);
-                            if (specialties.isEmpty) return const SizedBox.shrink();
+                            final specialties = _getAreaSpecialties(
+                              item.location,
+                            );
+                            if (specialties.isEmpty)
+                              return const SizedBox.shrink();
                             return Padding(
                               padding: const EdgeInsets.only(top: 8),
                               child: Wrap(
                                 spacing: 6,
                                 runSpacing: 4,
-                                children: specialties.map((s) {
-                                  return Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 3,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          s.color.withValues(alpha: 0.3),
-                                          s.color.withValues(alpha: 0.15),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: s.color.withValues(alpha: 0.5),
-                                        width: 0.5,
-                                      ),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          s.emoji,
-                                          style: const TextStyle(fontSize: 12),
+                                children:
+                                    specialties.map((s) {
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
                                         ),
-                                        const SizedBox(width: 3),
-                                        Text(
-                                          s.label,
-                                          style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.9),
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              s.color.withValues(alpha: 0.3),
+                                              s.color.withValues(alpha: 0.15),
+                                            ],
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          border: Border.all(
+                                            color: s.color.withValues(
+                                              alpha: 0.5,
+                                            ),
+                                            width: 0.5,
                                           ),
                                         ),
-                                      ],
-                                    ),
-                                  );
-                                }).toList(),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              s.emoji,
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Text(
+                                              s.label,
+                                              style: TextStyle(
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.9,
+                                                ),
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }).toList(),
                               ),
                             );
                           },
@@ -2269,7 +2209,11 @@ String _spotLottieAssetFor(String location) {
 
 /// 地域の特徴・名産タグ（桃鉄風）
 class _AreaSpecialty {
-  const _AreaSpecialty({required this.emoji, required this.label, required this.color});
+  const _AreaSpecialty({
+    required this.emoji,
+    required this.label,
+    required this.color,
+  });
   final String emoji;
   final String label;
   final Color color;
@@ -2281,120 +2225,236 @@ List<_AreaSpecialty> _getAreaSpecialties(String location) {
 
   // スポットタイプに基づくタグ
   if (RegExp(r'神社|寺|temple|shrine').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '⛩️', label: '歴史', color: Color(0xFFE57373)));
+    tags.add(
+      const _AreaSpecialty(emoji: '⛩️', label: '歴史', color: Color(0xFFE57373)),
+    );
   }
   if (RegExp(r'城|castle').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🏯', label: '名城', color: Color(0xFFBA68C8)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🏯', label: '名城', color: Color(0xFFBA68C8)),
+    );
   }
   if (RegExp(r'公園|garden|park|森').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🌿', label: '自然', color: Color(0xFF81C784)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🌿', label: '自然', color: Color(0xFF81C784)),
+    );
   }
   if (RegExp(r'山|岳|峠').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '⛰️', label: '絶景', color: Color(0xFF66BB6A)));
+    tags.add(
+      const _AreaSpecialty(emoji: '⛰️', label: '絶景', color: Color(0xFF66BB6A)),
+    );
   }
   if (RegExp(r'海|ビーチ|beach|港|島').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🏖️', label: '海', color: Color(0xFF4FC3F7)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🏖️', label: '海', color: Color(0xFF4FC3F7)),
+    );
   }
   if (RegExp(r'温泉|spa|風呂').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '♨️', label: '温泉', color: Color(0xFFEF5350)));
+    tags.add(
+      const _AreaSpecialty(emoji: '♨️', label: '温泉', color: Color(0xFFEF5350)),
+    );
   }
   if (RegExp(r'レストラン|カフェ|食|グルメ|cafe|restaurant').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍽️', label: 'グルメ', color: Color(0xFFFFB74D)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🍽️',
+        label: 'グルメ',
+        color: Color(0xFFFFB74D),
+      ),
+    );
   }
   if (RegExp(r'ラーメン').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍜', label: 'ラーメン', color: Color(0xFFFF8A65)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🍜',
+        label: 'ラーメン',
+        color: Color(0xFFFF8A65),
+      ),
+    );
   }
   if (RegExp(r'寿司|鮨').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍣', label: '寿司', color: Color(0xFFFF7043)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🍣', label: '寿司', color: Color(0xFFFF7043)),
+    );
   }
   if (RegExp(r'美術館|博物館|museum').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🎨', label: 'アート', color: Color(0xFFA1887F)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🎨', label: 'アート', color: Color(0xFFA1887F)),
+    );
   }
   if (RegExp(r'水族館').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🐠', label: '水族館', color: Color(0xFF29B6F6)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🐠', label: '水族館', color: Color(0xFF29B6F6)),
+    );
   }
   if (RegExp(r'動物園').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🦁', label: '動物園', color: Color(0xFFA5D6A7)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🦁', label: '動物園', color: Color(0xFFA5D6A7)),
+    );
   }
   if (RegExp(r'買|ショッピング|モール|shop|market|商店|通り').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🛍️', label: 'お買物', color: Color(0xFFFF8A65)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🛍️',
+        label: 'お買物',
+        color: Color(0xFFFF8A65),
+      ),
+    );
   }
   if (RegExp(r'ホテル|旅館|inn|hotel|宿').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🏨', label: '宿泊', color: Color(0xFF9575CD)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🏨', label: '宿泊', color: Color(0xFF9575CD)),
+    );
   }
   if (RegExp(r'駅|station').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🚉', label: '駅', color: Color(0xFF4DB6AC)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🚉', label: '駅', color: Color(0xFF4DB6AC)),
+    );
   }
   if (RegExp(r'空港|airport').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '✈️', label: '空港', color: Color(0xFF7986CB)));
+    tags.add(
+      const _AreaSpecialty(emoji: '✈️', label: '空港', color: Color(0xFF7986CB)),
+    );
   }
   if (RegExp(r'湖|滝|渓谷|川').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '💧', label: '水辺', color: Color(0xFF4FC3F7)));
+    tags.add(
+      const _AreaSpecialty(emoji: '💧', label: '水辺', color: Color(0xFF4FC3F7)),
+    );
   }
   if (RegExp(r'展望|タワー|tower|スカイ').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🗼', label: '展望', color: Color(0xFFFFD54F)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🗼', label: '展望', color: Color(0xFFFFD54F)),
+    );
   }
   if (RegExp(r'遊園地|テーマパーク|ランド|ワールド').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🎢', label: 'テーマパーク', color: Color(0xFFE040FB)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🎢',
+        label: 'テーマパーク',
+        color: Color(0xFFE040FB),
+      ),
+    );
   }
   if (RegExp(r'酒|ワイン|ビール|brewery|蔵').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍶', label: '名酒', color: Color(0xFFBCAAA4)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🍶', label: '名酒', color: Color(0xFFBCAAA4)),
+    );
   }
 
   // 地域名に基づくタグ（名産品）
   if (RegExp(r'京都|嵐山|祇園|清水').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍵', label: '抹茶', color: Color(0xFF66BB6A)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🍵', label: '抹茶', color: Color(0xFF66BB6A)),
+    );
   }
   if (RegExp(r'大阪|道頓堀|心斎橋|新世界').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🐙', label: 'たこ焼き', color: Color(0xFFFF7043)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🐙',
+        label: 'たこ焼き',
+        color: Color(0xFFFF7043),
+      ),
+    );
   }
   if (RegExp(r'北海道|札幌|小樽|函館|旭川|富良野').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🦀', label: '海鮮', color: Color(0xFFEF5350)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🦀', label: '海鮮', color: Color(0xFFEF5350)),
+    );
   }
   if (RegExp(r'沖縄|那覇|石垣|宮古').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🌺', label: '南国', color: Color(0xFFFF8A80)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🌺', label: '南国', color: Color(0xFFFF8A80)),
+    );
   }
   if (RegExp(r'福岡|博多|天神').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍜', label: '博多ラーメン', color: Color(0xFFFF8A65)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🍜',
+        label: '博多ラーメン',
+        color: Color(0xFFFF8A65),
+      ),
+    );
   }
   if (RegExp(r'広島|宮島').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🦪', label: '牡蠣', color: Color(0xFFBCAAA4)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🦪', label: '牡蠣', color: Color(0xFFBCAAA4)),
+    );
   }
   if (RegExp(r'金沢|兼六').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍱', label: '加賀料理', color: Color(0xFFFFD54F)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🍱',
+        label: '加賀料理',
+        color: Color(0xFFFFD54F),
+      ),
+    );
   }
   if (RegExp(r'名古屋|栄|大須').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍤', label: 'えびふりゃー', color: Color(0xFFFF8A65)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🍤',
+        label: 'えびふりゃー',
+        color: Color(0xFFFF8A65),
+      ),
+    );
   }
   if (RegExp(r'奈良').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🦌', label: '鹿', color: Color(0xFFA1887F)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🦌', label: '鹿', color: Color(0xFFA1887F)),
+    );
   }
   if (RegExp(r'神戸|三宮|元町').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🥩', label: '神戸牛', color: Color(0xFFE57373)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🥩', label: '神戸牛', color: Color(0xFFE57373)),
+    );
   }
   if (RegExp(r'長崎').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍝', label: 'ちゃんぽん', color: Color(0xFFFFB74D)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🍝',
+        label: 'ちゃんぽん',
+        color: Color(0xFFFFB74D),
+      ),
+    );
   }
   if (RegExp(r'仙台').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '👅', label: '牛タン', color: Color(0xFFE57373)));
+    tags.add(
+      const _AreaSpecialty(emoji: '👅', label: '牛タン', color: Color(0xFFE57373)),
+    );
   }
   if (RegExp(r'浅草|東京|渋谷|新宿|秋葉原|銀座').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🗼', label: '都会', color: Color(0xFF7986CB)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🗼', label: '都会', color: Color(0xFF7986CB)),
+    );
   }
   if (RegExp(r'鎌倉|江ノ島').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🏄', label: '湘南', color: Color(0xFF4FC3F7)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🏄', label: '湘南', color: Color(0xFF4FC3F7)),
+    );
   }
   if (RegExp(r'富士|河口湖').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🗻', label: '富士山', color: Color(0xFF90CAF9)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🗻', label: '富士山', color: Color(0xFF90CAF9)),
+    );
   }
   if (RegExp(r'日光').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🐒', label: '世界遺産', color: Color(0xFFA5D6A7)));
+    tags.add(
+      const _AreaSpecialty(
+        emoji: '🐒',
+        label: '世界遺産',
+        color: Color(0xFFA5D6A7),
+      ),
+    );
   }
   if (RegExp(r'熊本').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🐴', label: '馬刺し', color: Color(0xFFEF5350)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🐴', label: '馬刺し', color: Color(0xFFEF5350)),
+    );
   }
   if (RegExp(r'青森|弘前').hasMatch(l)) {
-    tags.add(const _AreaSpecialty(emoji: '🍎', label: 'りんご', color: Color(0xFFEF5350)));
+    tags.add(
+      const _AreaSpecialty(emoji: '🍎', label: 'りんご', color: Color(0xFFEF5350)),
+    );
   }
 
   // 最大3つまで
@@ -2402,14 +2462,14 @@ List<_AreaSpecialty> _getAreaSpecialties(String location) {
   return tags;
 }
 
-/// 距離に応じたカメラ設定
-({double zoom, double pitch}) _cameraForTransit(PlanItem? from, PlanItem to) {
-  if (from == null) return (zoom: 14.0, pitch: 45.0);
+/// 距離に応じたスポット到着時カメラ設定（地域が見える程度に引く）
+({double zoom, double pitch}) _cameraForArrival(PlanItem? from, PlanItem to) {
+  if (from == null) return (zoom: 12.0, pitch: 30.0);
   final dist = _haversineDistance(from, to);
-  if (dist < 1.0) return (zoom: 16.0, pitch: 60.0);
-  if (dist < 15.0) return (zoom: 15.0, pitch: 50.0);
-  if (dist < 100.0) return (zoom: 13.5, pitch: 40.0);
-  return (zoom: 11.0, pitch: 30.0);
+  if (dist < 1.0) return (zoom: 14.0, pitch: 35.0);
+  if (dist < 15.0) return (zoom: 12.5, pitch: 30.0);
+  if (dist < 100.0) return (zoom: 11.0, pitch: 25.0);
+  return (zoom: 9.0, pitch: 15.0);
 }
 
 /// 推定移動時間（分）

@@ -28,12 +28,7 @@ _$TripModelImpl _$$TripModelImplFromJson(
       json['endDate'] == null
           ? null
           : DateTime.parse(json['endDate'] as String),
-  status:
-      $enumDecodeNullable(_$TripStatusEnumMap, json['status']) ??
-      TripStatus.collecting,
-  confirmedPlanId: json['confirmedPlanId'] as String?,
-  editingPlanId: json['editingPlanId'] as String?,
-  aiGenerationCount: (json['aiGenerationCount'] as num?)?.toInt() ?? 0,
+  planId: json['planId'] as String?,
   createdAt: DateTime.parse(json['createdAt'] as String),
   updatedAt: DateTime.parse(json['updatedAt'] as String),
 );
@@ -47,18 +42,7 @@ Map<String, dynamic> _$$TripModelImplToJson(_$TripModelImpl instance) =>
       'memberDetails': instance.memberDetails,
       'startDate': instance.startDate?.toIso8601String(),
       'endDate': instance.endDate?.toIso8601String(),
-      'status': _$TripStatusEnumMap[instance.status]!,
-      'confirmedPlanId': instance.confirmedPlanId,
-      'editingPlanId': instance.editingPlanId,
-      'aiGenerationCount': instance.aiGenerationCount,
+      'planId': instance.planId,
       'createdAt': instance.createdAt.toIso8601String(),
       'updatedAt': instance.updatedAt.toIso8601String(),
     };
-
-const _$TripStatusEnumMap = {
-  TripStatus.lobby: 'lobby',
-  TripStatus.collecting: 'collecting',
-  TripStatus.voting: 'voting',
-  TripStatus.confirmed: 'confirmed',
-  TripStatus.ongoing: 'ongoing',
-};

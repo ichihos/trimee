@@ -7,9 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'firebase_options.dart';
 import 'shared/providers/ad_provider.dart';
-import 'shared/providers/firebase_providers.dart';
+
 import 'shared/providers/guest_session_provider.dart';
-import 'shared/providers/iap_provider.dart';
 import 'shared/providers/theme_provider.dart';
 
 void main() async {
@@ -37,18 +36,13 @@ void main() async {
   if (!kIsWeb) {
     final adService = container.read(adServiceProvider);
     await adService.init();
-    await adService.loadInterstitialAd(); // 初回AI生成用にプリロード
-    await adService.loadRewardedAd(); // 2回目以降のAI生成用にプリロード
+    await adService.loadInterstitialAd();
   }
 
-  // RevenueCat (IAP) 初期化
-  try {
-    final iapService = container.read(iapServiceProvider);
-    final userId = container.read(currentUserIdProvider) ?? '';
-    await iapService.initialize(userId);
-  } catch (e) {
-    print('[Main] IAP initialization failed: $e');
-    // IAP初期化失敗は致命的ではないため、アプリは起動を続ける
+  // 起動時インタースティシャル広告表示
+  if (!kIsWeb) {
+    final adService = container.read(adServiceProvider);
+    await adService.showInterstitialAdIfNeeded();
   }
 
   runApp(

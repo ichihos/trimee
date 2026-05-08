@@ -5,13 +5,10 @@ import 'core/constants/app_strings.dart';
 import 'core/constants/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/screens/sign_in_screen.dart';
-import 'features/cards/presentation/screens/cards_screen.dart';
 import 'features/home/presentation/screens/home_screen.dart';
 import 'features/onboarding/presentation/screens/profile_setup_screen.dart';
 import 'features/onboarding/presentation/screens/welcome_screen.dart';
-import 'features/plan/presentation/screens/plan_screen.dart';
 import 'features/trip/presentation/screens/join_screen.dart';
-import 'features/trip/presentation/screens/member_lobby_screen.dart';
 import 'shared/providers/firebase_providers.dart';
 import 'shared/providers/guest_session_provider.dart';
 import 'shared/providers/theme_provider.dart';
@@ -142,7 +139,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isJoinRoute = state.matchedLocation.startsWith('/join/');
       final isProfileSetupRoute = state.matchedLocation == '/profile-setup';
 
-      // 招待リンクとトリップ画面は認証不要でアクセス可能（名前はjoin時に収集済み）
+      // 招待リンクとトリップ画面は認証不要でアクセス可能
       if (isJoinRoute) {
         return null;
       }
@@ -158,8 +155,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           state.uri.path.startsWith('/trip/');
 
       // セッションがあり、プロフィール未完了なら設定画面へ
-      // ただし、トリップ/プラン/ホーム関連ルートはスキップ（join経由で名前のみ入力済みの場合）
-      // プロフィール読み込み中はリダイレクトしない（Web リロード時のフラッシュ防止）
       final isHomeRoute = state.matchedLocation == '/';
       final isPlanRoute =
           state.matchedLocation.startsWith('/plan/') ||
@@ -173,7 +168,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           !isHomeRoute &&
           !isPlanRoute) {
         final from = state.uri.toString();
-        // カード画面などでリダイレクトループを防ぐため、fromがtripを含む場合はリダイレクトしない
         if (from.contains('/trip/')) {
           return null;
         }
@@ -186,7 +180,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       }
 
       // 認証済みユーザーでプロフィール完了済みなら、welcomeとsign-inからホームにリダイレクト
-      // ゲストユーザーはsign-inにアクセス可能、welcomeからはホームにリダイレクト
       if (hasSession && isProfileComplete && isWelcomeRoute) {
         return '/';
       }
@@ -274,49 +267,6 @@ final routerProvider = Provider<GoRouter>((ref) {
               child: const HomeScreen(),
               type: TransitionType.fade,
             ),
-        routes: [
-          // 旅行詳細（カード一覧）
-          GoRoute(
-            path: 'trip/:tripId',
-            pageBuilder: (context, state) {
-              final tripId = state.pathParameters['tripId']!;
-              return _buildPageWithTransition(
-                context: context,
-                state: state,
-                child: CardsScreen(tripId: tripId),
-                type: TransitionType.slideRight,
-              );
-            },
-            routes: [
-              // メンバー待機画面
-              GoRoute(
-                path: 'lobby',
-                pageBuilder: (context, state) {
-                  final tripId = state.pathParameters['tripId']!;
-                  return _buildPageWithTransition(
-                    context: context,
-                    state: state,
-                    child: MemberLobbyScreen(tripId: tripId),
-                    type: TransitionType.slideUp,
-                  );
-                },
-              ),
-              // プラン
-              GoRoute(
-                path: 'plan',
-                pageBuilder: (context, state) {
-                  final tripId = state.pathParameters['tripId']!;
-                  return _buildPageWithTransition(
-                    context: context,
-                    state: state,
-                    child: PlanScreen(tripId: tripId),
-                    type: TransitionType.slideUp,
-                  );
-                },
-              ),
-            ],
-          ),
-        ],
       ),
     ],
     errorBuilder:

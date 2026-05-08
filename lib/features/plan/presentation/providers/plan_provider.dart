@@ -8,14 +8,6 @@ final planRepositoryProvider = Provider<PlanRepository>((ref) {
   return PlanRepository(firestore: ref.watch(firestoreProvider));
 });
 
-/// 旅行のプラン一覧プロバイダー
-final tripPlansProvider = StreamProvider.family<List<PlanModel>, String>((
-  ref,
-  tripId,
-) {
-  return ref.watch(planRepositoryProvider).watchPlans(tripId);
-});
-
 /// 単一プランのリアルタイム監視プロバイダー
 final watchPlanProvider = StreamProvider.family<
   PlanModel?,
@@ -48,17 +40,17 @@ class PlanController extends StateNotifier<AsyncValue<void>> {
   /// プランを作成
   Future<String?> createPlan({
     required String tripId,
-    required PlanModel plan,
+    required String title,
+    String? description,
+    List<PlanItem> items = const [],
   }) async {
     state = const AsyncValue.loading();
     try {
       final planId = await _repository.createPlan(
         tripId: tripId,
-        title: plan.title,
-        description: plan.description,
-        items: plan.items,
-        includedCards: plan.includedCards,
-        excludedCards: plan.excludedCards,
+        title: title,
+        description: description,
+        items: items,
       );
 
       state = const AsyncValue.data(null);
@@ -66,44 +58,6 @@ class PlanController extends StateNotifier<AsyncValue<void>> {
     } catch (e, st) {
       state = AsyncValue.error(e, st);
       return null;
-    }
-  }
-
-  /// プランに投票
-  Future<void> vote({
-    required String tripId,
-    required String planId,
-    required bool approve,
-  }) async {
-    final userId = _currentUserId;
-    if (userId == null) return;
-
-    state = const AsyncValue.loading();
-    try {
-      state = await AsyncValue.guard(
-        () => _repository.vote(
-          tripId: tripId,
-          planId: planId,
-          userId: userId,
-          approve: approve,
-        ),
-      );
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-    }
-  }
-
-  /// プランを確定
-  Future<void> confirmPlan({
-    required String tripId,
-    required String planId,
-  }) async {
-    state = const AsyncValue.loading();
-    try {
-      await _repository.confirmPlan(tripId, planId);
-      state = const AsyncValue.data(null);
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
     }
   }
 
@@ -135,8 +89,25 @@ class PlanController extends StateNotifier<AsyncValue<void>> {
         userId: userId,
         userName: userName,
       );
-    } catch (_) {
-      // プレゼンス更新の失敗は無視
+    } catch (_) {}
+  }
+
+  /// アイテムリストのみ更新
+  Future<void> updatePlanItems({
+    required String tripId,
+    required String planId,
+    required List<PlanItem> items,
+    String? editedByName,
+  }) async {
+    try {
+      await _repository.updatePlanItems(
+        tripId: tripId,
+        planId: planId,
+        items: items,
+        editedByName: editedByName,
+      );
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
     }
   }
 
@@ -155,64 +126,5 @@ class PlanController extends StateNotifier<AsyncValue<void>> {
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
-  }
-
-  /// 説明のみ更新
-  Future<void> updatePlanDescription({
-    required String tripId,
-    required String planId,
-    required String description,
-  }) async {
-    try {
-      await _repository.updatePlanDescription(
-        tripId: tripId,
-        planId: planId,
-        description: description,
-      );
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-    }
-  }
-
-  /// アイテムリストのみ更新
-  Future<void> updatePlanItems({
-    required String tripId,
-    required String planId,
-    required List<PlanItem> items,
-  }) async {
-    try {
-      await _repository.updatePlanItems(
-        tripId: tripId,
-        planId: planId,
-        items: items,
-      );
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-    }
-  }
-
-  /// プランのアイコンのみ更新
-  Future<void> updatePlanIcon({
-    required String tripId,
-    required String planId,
-    required String? iconUrl,
-  }) async {
-    try {
-      await _repository.updatePlanIcon(
-        tripId: tripId,
-        planId: planId,
-        iconUrl: iconUrl,
-      );
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-    }
-  }
-
-  /// 編集中プランIDを設定（旅行ドキュメントに保存）
-  Future<void> setEditingPlanId({
-    required String tripId,
-    required String? planId,
-  }) async {
-    await _repository.setEditingPlanId(tripId, planId);
   }
 }

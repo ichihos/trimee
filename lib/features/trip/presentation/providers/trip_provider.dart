@@ -4,12 +4,12 @@ import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/providers/firebase_providers.dart';
 import '../../data/repositories/trip_repository.dart';
 
-/// 旅行リポジトリプロバイダー
+/// しおりリポジトリプロバイダー
 final tripRepositoryProvider = Provider<TripRepository>((ref) {
   return TripRepository(firestore: ref.watch(firestoreProvider));
 });
 
-/// ユーザーの旅行一覧プロバイダー
+/// ユーザーのしおり一覧プロバイダー
 final userTripsProvider = StreamProvider<List<TripModel>>((ref) {
   final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return Stream.value([]);
@@ -17,7 +17,7 @@ final userTripsProvider = StreamProvider<List<TripModel>>((ref) {
   return ref.watch(tripRepositoryProvider).watchUserTrips(userId);
 });
 
-/// 旅行詳細プロバイダー
+/// しおり詳細プロバイダー
 final tripDetailProvider = StreamProvider.family<TripModel?, String>((
   ref,
   tripId,
@@ -25,7 +25,7 @@ final tripDetailProvider = StreamProvider.family<TripModel?, String>((
   return ref.watch(tripRepositoryProvider).watchTrip(tripId);
 });
 
-/// 旅行コントローラープロバイダー
+/// しおりコントローラープロバイダー
 final tripControllerProvider =
     StateNotifierProvider<TripController, AsyncValue<void>>((ref) {
       return TripController(
@@ -34,7 +34,7 @@ final tripControllerProvider =
       );
     });
 
-/// 旅行コントローラー
+/// しおりコントローラー
 class TripController extends StateNotifier<AsyncValue<void>> {
   TripController({
     required TripRepository repository,
@@ -46,13 +46,12 @@ class TripController extends StateNotifier<AsyncValue<void>> {
   final TripRepository _repository;
   final String? _currentUserId;
 
-  /// 旅行を作成（常にFirestoreに保存）
+  /// しおりを作成
   Future<String?> createTrip({
     required String title,
     DateTime? startDate,
     DateTime? endDate,
     String? ownerName,
-    String? ownerDeparture,
   }) async {
     final userId = _currentUserId;
     if (userId == null) return null;
@@ -65,7 +64,6 @@ class TripController extends StateNotifier<AsyncValue<void>> {
         startDate: startDate,
         endDate: endDate,
         ownerName: ownerName,
-        ownerDeparture: ownerDeparture,
       );
 
       state = const AsyncValue.data(null);
@@ -76,21 +74,7 @@ class TripController extends StateNotifier<AsyncValue<void>> {
     }
   }
 
-  /// メンバーを招待
-  Future<void> inviteMember(String tripId, String userId) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() => _repository.addMember(tripId, userId));
-  }
-
-  /// 旅行のステータスを更新
-  Future<void> updateStatus(String tripId, TripStatus status) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(
-      () => _repository.updateStatus(tripId, status),
-    );
-  }
-
-  /// 旅行に参加（招待リンクから）
+  /// しおりに参加（招待リンクから）
   Future<bool> joinTrip(String tripId) async {
     final userId = _currentUserId;
     if (userId == null) return false;
@@ -106,7 +90,7 @@ class TripController extends StateNotifier<AsyncValue<void>> {
     }
   }
 
-  /// 旅行を取得（招待リンク用）
+  /// しおりを取得
   Future<TripModel?> getTrip(String tripId) async {
     return _repository.getTrip(tripId);
   }
@@ -118,13 +102,5 @@ class TripController extends StateNotifier<AsyncValue<void>> {
     TripMember member,
   ) async {
     await _repository.updateMemberDetails(tripId, userId, member.toJson());
-  }
-
-  /// AI生成回数をインクリメント
-  Future<void> incrementAiGenerationCount(String tripId) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(
-      () => _repository.incrementAiGenerationCount(tripId),
-    );
   }
 }

@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../../shared/models/trip_member_model.dart';
 import '../../../../shared/models/trip_model.dart';
 
-/// 旅行リポジトリ
+/// しおり（旅行）リポジトリ
 class TripRepository {
   TripRepository({required FirebaseFirestore firestore})
     : _firestore = firestore;
@@ -12,14 +12,13 @@ class TripRepository {
   CollectionReference<Map<String, dynamic>> get _tripsCollection =>
       _firestore.collection('trips');
 
-  /// 旅行を作成
+  /// しおりを作成
   Future<String> createTrip({
     required String title,
     required String createdBy,
     DateTime? startDate,
     DateTime? endDate,
     String? ownerName,
-    String? ownerDeparture,
   }) async {
     final now = DateTime.now();
 
@@ -28,7 +27,6 @@ class TripRepository {
       memberDetails[createdBy] = TripMember(
         userId: createdBy,
         displayName: ownerName,
-        departurePoint: ownerDeparture,
         isManual: false,
       );
     }
@@ -41,7 +39,6 @@ class TripRepository {
       memberDetails: memberDetails,
       startDate: startDate,
       endDate: endDate,
-      status: TripStatus.lobby,
       createdAt: now,
       updatedAt: now,
     );
@@ -50,7 +47,7 @@ class TripRepository {
     return doc.id;
   }
 
-  /// ユーザーの旅行一覧を監視
+  /// ユーザーのしおり一覧を監視
   Stream<List<TripModel>> watchUserTrips(String userId) {
     return _tripsCollection
         .where('members', arrayContains: userId)
@@ -62,7 +59,7 @@ class TripRepository {
         );
   }
 
-  /// 旅行を監視
+  /// しおりを監視
   Stream<TripModel?> watchTrip(String tripId) {
     return _tripsCollection.doc(tripId).snapshots().map((doc) {
       if (doc.exists) {
@@ -72,7 +69,7 @@ class TripRepository {
     });
   }
 
-  /// 旅行を取得
+  /// しおりを取得
   Future<TripModel?> getTrip(String tripId) async {
     final doc = await _tripsCollection.doc(tripId).get();
     if (doc.exists) {
@@ -89,22 +86,6 @@ class TripRepository {
     });
   }
 
-  /// メンバーを削除
-  Future<void> removeMember(String tripId, String userId) async {
-    await _tripsCollection.doc(tripId).update({
-      'members': FieldValue.arrayRemove([userId]),
-      'updatedAt': Timestamp.now(),
-    });
-  }
-
-  /// ステータスを更新
-  Future<void> updateStatus(String tripId, TripStatus status) async {
-    await _tripsCollection.doc(tripId).update({
-      'status': status.name,
-      'updatedAt': Timestamp.now(),
-    });
-  }
-
   /// メンバー詳細を更新
   Future<void> updateMemberDetails(
     String tripId,
@@ -117,20 +98,20 @@ class TripRepository {
     });
   }
 
-  /// AI生成回数をインクリメント
-  Future<void> incrementAiGenerationCount(String tripId) async {
-    await _tripsCollection.doc(tripId).update({
-      'aiGenerationCount': FieldValue.increment(1),
-      'updatedAt': Timestamp.now(),
-    });
-  }
-
-  /// 旅行を更新
+  /// しおりを更新
   Future<void> updateTrip(TripModel trip) async {
     await _tripsCollection.doc(trip.id).update(trip.toFirestore());
   }
 
-  /// 旅行を削除
+  /// プランIDを設定
+  Future<void> setPlanId(String tripId, String planId) async {
+    await _tripsCollection.doc(tripId).update({
+      'planId': planId,
+      'updatedAt': Timestamp.now(),
+    });
+  }
+
+  /// しおりを削除
   Future<void> deleteTrip(String tripId) async {
     await _tripsCollection.doc(tripId).delete();
   }

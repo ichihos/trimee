@@ -5,25 +5,7 @@ import 'trip_member_model.dart';
 part 'trip_model.freezed.dart';
 part 'trip_model.g.dart';
 
-/// 旅行のステータス
-enum TripStatus {
-  /// メンバー待機中（ロビー）
-  lobby,
-
-  /// カード集め中
-  collecting,
-
-  /// 投票中
-  voting,
-
-  /// プラン確定済み
-  confirmed,
-
-  /// 旅行中（当日モード）
-  ongoing,
-}
-
-/// 旅行モデル
+/// しおりモデル（旧TripModel）
 @freezed
 class TripModel with _$TripModel {
   const factory TripModel({
@@ -36,12 +18,9 @@ class TripModel with _$TripModel {
     @Default({}) Map<String, TripMember> memberDetails,
     DateTime? startDate,
     DateTime? endDate,
-    @Default(TripStatus.collecting) TripStatus status,
-    String? confirmedPlanId,
-    String? editingPlanId,
 
-    /// AI生成回数（旅行単位でのマネタイズ管理用）
-    @Default(0) int aiGenerationCount,
+    /// しおりのプランID（1トリップに1プラン）
+    String? planId,
 
     required DateTime createdAt,
     required DateTime updatedAt,
@@ -53,7 +32,7 @@ class TripModel with _$TripModel {
   factory TripModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
 
-    // memberDetails のパース（null値を安全に処理）
+    // memberDetails のパース
     final memberDetailsData = data['memberDetails'] as Map<String, dynamic>?;
     final memberDetails = <String, TripMember>{};
     if (memberDetailsData != null) {
@@ -78,13 +57,7 @@ class TripModel with _$TripModel {
           data['endDate'] != null
               ? (data['endDate'] as Timestamp).toDate()
               : null,
-      status: TripStatus.values.firstWhere(
-        (e) => e.name == data['status'],
-        orElse: () => TripStatus.collecting,
-      ),
-      confirmedPlanId: data['confirmedPlanId'],
-      editingPlanId: data['editingPlanId'],
-      aiGenerationCount: data['aiGenerationCount'] as int? ?? 0,
+      planId: data['planId'] ?? data['confirmedPlanId'] ?? data['editingPlanId'],
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       updatedAt: (data['updatedAt'] as Timestamp).toDate(),
     );
@@ -93,7 +66,6 @@ class TripModel with _$TripModel {
 
 extension TripModelExtension on TripModel {
   Map<String, dynamic> toFirestore() {
-    // memberDetails をシリアライズ
     final memberDetailsMap = <String, dynamic>{};
     for (final entry in memberDetails.entries) {
       memberDetailsMap[entry.key] = entry.value.toJson();
@@ -106,10 +78,7 @@ extension TripModelExtension on TripModel {
       'memberDetails': memberDetailsMap,
       'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
       'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
-      'status': status.name,
-      'confirmedPlanId': confirmedPlanId,
-      'editingPlanId': editingPlanId,
-      'aiGenerationCount': aiGenerationCount,
+      'planId': planId,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };

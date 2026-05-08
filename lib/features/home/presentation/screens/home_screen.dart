@@ -1,16 +1,15 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import '../../../../core/constants/ad_constants.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/providers/theme_provider.dart';
-import '../../../../shared/providers/guest_session_provider.dart';
-import '../../../../shared/providers/firebase_providers.dart' show currentUserIdProvider, isAuthenticatedProvider;
-import '../../../../shared/providers/user_profile_provider.dart';
-import '../../../../shared/models/user_profile_model.dart';
 import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/widgets/app_card.dart';
@@ -20,6 +19,7 @@ import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../plan/presentation/providers/plan_provider.dart';
 import '../../../plan/presentation/screens/plan_edit_screen.dart';
 import '../../../plan/presentation/screens/plan_view_screen.dart';
+
 import '../../../trip/presentation/providers/trip_provider.dart';
 
 /// ホーム画面
@@ -32,6 +32,7 @@ class HomeScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      bottomNavigationBar: kIsWeb ? null : const _BannerAdWidget(),
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
@@ -61,11 +62,11 @@ class HomeScreen extends ConsumerWidget {
 
                 final activeTrips =
                     trips
-                        .where((t) => t.status != TripStatus.confirmed)
+                        .where((t) => t.planId == null || t.endDate == null || t.endDate!.isAfter(DateTime.now()))
                         .toList();
                 final pastTrips =
                     trips
-                        .where((t) => t.status == TripStatus.confirmed)
+                        .where((t) => t.planId != null && t.endDate != null && t.endDate!.isBefore(DateTime.now()))
                         .toList();
 
                 return SliverList(
@@ -168,13 +169,44 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
-  void _showCreateTripDialog(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet(
+  Future<void> _showCreateTripDialog(BuildContext context, WidgetRef ref) async {
+    final result = await showModalBottomSheet<({String tripId, String title, DateTime? startDate, DateTime? endDate})>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => const _CreateTripSheet(),
     );
+
+    if (result != null && context.mounted) {
+      try {
+        final planId = await ref
+            .read(planControllerProvider.notifier)
+            .createPlan(
+              tripId: result.tripId,
+              title: result.title,
+            );
+        if (planId != null && context.mounted) {
+          final plan = await ref
+              .read(planRepositoryProvider)
+              .getPlan(result.tripId, planId);
+          if (plan != null && context.mounted) {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => PlanEditScreen(
+                  tripId: result.tripId,
+                  plan: plan,
+                  tripTitle: result.title,
+                  startDate: result.startDate,
+                  endDate: result.endDate,
+                ),
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('Error creating plan: $e');
+      }
+    }
   }
 
   /// 入力値からトリップIDを抽出（URLが貼られた場合も対応）
@@ -283,221 +315,42 @@ class HomeScreen extends ConsumerWidget {
     ).then((_) => controller.dispose());
   }
 
-  /// 旅程のステータスに応じて適切な画面に遷移
+  /// しおりの適切な画面に遷移
   Future<void> _navigateToTrip(
     BuildContext context,
     WidgetRef ref,
     TripModel trip,
   ) async {
-    switch (trip.status) {
-      case TripStatus.lobby:
-        // ロビー画面へ
-        context.go('/trip/${trip.id}/lobby');
-        break;
-      case TripStatus.collecting:
-      case TripStatus.voting:
-        // 編集中のプランがあれば直接編集画面へ
-        if (trip.editingPlanId != null) {
-          await _navigateToEditingPlan(context, ref, trip);
-        } else if (trip.status == TripStatus.voting) {
-          // 投票中はプラン画面へ
-          context.go('/trip/${trip.id}/plan');
-        } else {
-          // カード集め中はカード画面へ
-          context.go('/trip/${trip.id}');
-        }
-        break;
-      case TripStatus.confirmed:
-      case TripStatus.ongoing:
-        // 確定済み/旅行中は確定プランの閲覧画面へ
-        if (trip.confirmedPlanId != null) {
-          // ローディング表示
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder:
-                (context) => Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSizes.paddingXL,
-                      vertical: AppSizes.paddingL,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.cardBackground,
-                      borderRadius: BorderRadius.circular(AppSizes.radiusL),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 16,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(
-                          color: AppColors.accent,
-                          strokeWidth: 3,
-                        ),
-                        const SizedBox(height: AppSizes.paddingM),
-                        Text(
-                          'プランを読み込み中...',
-                          style: AppTypography.bodyMedium.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-          );
-
-          try {
-            // 確定プランを直接取得
-            final confirmedPlan = await ref
-                .read(planRepositoryProvider)
-                .getPlan(trip.id, trip.confirmedPlanId!);
-
-            // ローディングダイアログを閉じる
-            if (context.mounted) {
-              Navigator.of(context).pop();
-            }
-
-            if (confirmedPlan != null && context.mounted) {
-              Navigator.of(context).push(
-                PageRouteBuilder(
-                  pageBuilder: (context, animation, secondaryAnimation) =>
-                      PlanViewScreen(
-                        tripId: trip.id,
-                        plan: confirmedPlan,
-                        trip: trip,
-                      ),
-                  transitionDuration: const Duration(milliseconds: 300),
-                  reverseTransitionDuration: const Duration(milliseconds: 250),
-                  transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                    return SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0.0, 0.3),
-                        end: Offset.zero,
-                      ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation),
-                      child: FadeTransition(
-                        opacity: CurveTween(curve: Curves.easeOut).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                ),
-              );
-              return;
-            } else {
-              // debugPrint('Confirmed plan is null!');
-            }
-          } catch (e) {
-            // ローディングダイアログを閉じる
-            if (context.mounted) {
-              Navigator.of(context).pop();
-            }
-            debugPrint('Error loading confirmed plan: $e');
-          }
-
-          // 確定プランが見つからない場合はエラー表示してカード画面へ
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('確定プランの読み込みに失敗しました'),
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                ),
-              ),
-            );
-            // カード画面に遷移（プラン選択画面ではない）
-            context.go('/trip/${trip.id}');
-          }
-        } else {
-          // confirmedPlanIdがない場合（異常状態）
-          debugPrint('Confirmed plan ID is null for trip: ${trip.id}');
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('確定プラン情報が見つかりません'),
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                ),
-              ),
-            );
-            context.go('/trip/${trip.id}');
-          }
-        }
-        break;
+    if (trip.planId != null) {
+      // プランが存在する場合 → 読み込んで編集/閲覧画面へ
+      _navigateToPlan(context, ref, trip);
+    } else {
+      // プランがない場合 → 新規作成して編集画面へ
+      _createAndNavigateToPlan(context, ref, trip);
     }
   }
 
-  /// 編集中プランに直接遷移
-  Future<void> _navigateToEditingPlan(
+  /// 既存プランを読み込んで遷移
+  Future<void> _navigateToPlan(
     BuildContext context,
     WidgetRef ref,
     TripModel trip,
   ) async {
-    // ローディング表示
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (context) => Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSizes.paddingXL,
-                vertical: AppSizes.paddingL,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.cardBackground,
-                borderRadius: BorderRadius.circular(AppSizes.radiusL),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(
-                    color: AppColors.accent,
-                    strokeWidth: 3,
-                  ),
-                  const SizedBox(height: AppSizes.paddingM),
-                  Text(
-                    '編集中のプランを読み込み中...',
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-    );
-
     try {
-      final plans = await ref.read(tripPlansProvider(trip.id).future);
-      final editingPlan =
-          plans.where((p) => p.id == trip.editingPlanId).firstOrNull;
+      final plan = await ref
+          .read(planRepositoryProvider)
+          .getPlan(trip.id, trip.planId!);
 
-      // ローディングダイアログを閉じる
-      if (context.mounted) {
-        Navigator.of(context).pop();
-      }
-
-      if (editingPlan != null && context.mounted) {
+      if (plan != null && context.mounted) {
         Navigator.of(context).push(
           PageRouteBuilder(
             pageBuilder: (context, animation, secondaryAnimation) =>
-                PlanEditScreen(tripId: trip.id, plan: editingPlan),
+                PlanViewScreen(
+                  tripId: trip.id,
+                  plan: plan,
+                  tripTitle: trip.title,
+                  startDate: trip.startDate,
+                ),
             transitionDuration: const Duration(milliseconds: 300),
             reverseTransitionDuration: const Duration(milliseconds: 250),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -514,23 +367,57 @@ class HomeScreen extends ConsumerWidget {
             },
           ),
         );
-        return;
       }
     } catch (e) {
-      // ローディングダイアログを閉じる
+      debugPrint('Error loading plan: $e');
       if (context.mounted) {
-        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('しおりの読み込みに失敗しました'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusM),
+            ),
+          ),
+        );
       }
-      debugPrint('Error loading editing plan: $e');
     }
+  }
 
-    // 編集中プランが見つからない場合はフォールバック
-    if (context.mounted) {
-      if (trip.status == TripStatus.voting) {
-        context.go('/trip/${trip.id}/plan');
-      } else {
-        context.go('/trip/${trip.id}');
+  /// 新規プランを作成して遷移
+  Future<void> _createAndNavigateToPlan(
+    BuildContext context,
+    WidgetRef ref,
+    TripModel trip,
+  ) async {
+    try {
+      final planId = await ref
+          .read(planControllerProvider.notifier)
+          .createPlan(
+            tripId: trip.id,
+            title: trip.title,
+          );
+
+      if (planId != null && context.mounted) {
+        final plan = await ref
+            .read(planRepositoryProvider)
+            .getPlan(trip.id, planId);
+        if (plan != null && context.mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => PlanEditScreen(
+                tripId: trip.id,
+                plan: plan,
+                tripTitle: trip.title,
+                startDate: trip.startDate,
+                endDate: trip.endDate,
+              ),
+            ),
+          );
+        }
       }
+    } catch (e) {
+      debugPrint('Error creating plan: $e');
     }
   }
 
@@ -1416,8 +1303,8 @@ class _TripCard extends StatelessWidget {
                   ],
                 ),
               ),
-              // ステータスインジケーター
-              if (trip.status == TripStatus.confirmed)
+              // しおり有無インジケーター
+              if (trip.planId != null)
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
@@ -1425,7 +1312,7 @@ class _TripCard extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
-                    Icons.check_rounded,
+                    Icons.auto_stories_outlined,
                     color: AppColors.subAccent,
                     size: 16,
                   ),
@@ -1437,15 +1324,14 @@ class _TripCard extends StatelessWidget {
           Divider(height: 1, color: AppColors.border),
           const SizedBox(height: AppSizes.paddingM),
 
-          // 下部: メンバーとステータス
+          // 下部: メンバー
           Row(
             children: [
               // メンバーアバター（イニシャル表示）
               _TripMemberAvatars(trip: trip),
               const Spacer(),
               // ステータスバッジ
-              if (trip.status != TripStatus.confirmed)
-                _StatusBadge(status: trip.status),
+              _StatusBadge(hasPlan: trip.planId != null),
             ],
           ),
         ],
@@ -1563,19 +1449,14 @@ class _TripAvatarCircle extends StatelessWidget {
 
 /// ステータスバッジ
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
+  const _StatusBadge({required this.hasPlan});
 
-  final TripStatus status;
+  final bool hasPlan;
 
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (status) {
-      TripStatus.lobby => ('メンバー待ち', AppColors.textSecondary),
-      TripStatus.collecting => ('カード集め中', AppColors.accent),
-      TripStatus.voting => (AppStrings.votePending, AppColors.subAccent),
-      TripStatus.confirmed => ('確定', AppColors.subAccent),
-      TripStatus.ongoing => ('旅行中', AppColors.subAccent),
-    };
+    final label = hasPlan ? 'しおり作成済み' : '準備中';
+    final color = hasPlan ? AppColors.subAccent : AppColors.textSecondary;
 
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -1609,7 +1490,62 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-/// 旅行作成シート（2ステップ: 旅の情報 → あなたの情報）
+/// バナー広告ウィジェット
+class _BannerAdWidget extends StatefulWidget {
+  const _BannerAdWidget();
+
+  @override
+  State<_BannerAdWidget> createState() => _BannerAdWidgetState();
+}
+
+class _BannerAdWidgetState extends State<_BannerAdWidget> {
+  BannerAd? _bannerAd;
+  bool _isLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAd();
+  }
+
+  void _loadAd() {
+    _bannerAd = BannerAd(
+      adUnitId: AdConstants.bannerAdUnitId,
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (mounted) setState(() => _isLoaded = true);
+        },
+        onAdFailedToLoad: (ad, error) {
+          debugPrint('Banner ad failed to load: $error');
+          ad.dispose();
+        },
+      ),
+    )..load();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isLoaded || _bannerAd == null) return const SizedBox.shrink();
+
+    return Container(
+      color: AppColors.background,
+      width: double.infinity,
+      height: _bannerAd!.size.height.toDouble(),
+      alignment: Alignment.center,
+      child: AdWidget(ad: _bannerAd!),
+    );
+  }
+}
+
+/// 旅行作成シート
 class _CreateTripSheet extends ConsumerStatefulWidget {
   const _CreateTripSheet();
 
@@ -1619,35 +1555,14 @@ class _CreateTripSheet extends ConsumerStatefulWidget {
 
 class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
   final _titleController = TextEditingController();
-  final _nameController = TextEditingController();
-  final _departureController = TextEditingController();
-  final _departureFocus = FocusNode();
   DateTimeRange? _dateRange;
   bool _isDateUndecided = false;
   bool _isLoading = false;
   bool _showSuccess = false;
-  int _currentStep = 0; // 0 = 旅の情報, 1 = あなたの情報
-
-  @override
-  void initState() {
-    super.initState();
-    // 既存の名前があればプリセット
-    final existingName = ref.read(guestNameProvider);
-    if (existingName != null && existingName.isNotEmpty) {
-      _nameController.text = existingName;
-    }
-    final session = ref.read(guestSessionProvider);
-    if (session?.departurePoint != null) {
-      _departureController.text = session!.departurePoint!;
-    }
-  }
 
   @override
   void dispose() {
     _titleController.dispose();
-    _nameController.dispose();
-    _departureController.dispose();
-    _departureFocus.dispose();
     super.dispose();
   }
 
@@ -1688,41 +1603,18 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
             if (_showSuccess)
               _buildSuccessState()
             else
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0.15, 0),
-                        end: Offset.zero,
-                      ).animate(CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      )),
-                      child: child,
-                    ),
-                  );
-                },
-                child: _currentStep == 0
-                    ? _buildStepOne(key: const ValueKey(0))
-                    : _buildStepTwo(key: const ValueKey(1)),
-              ),
+              _buildContent(),
           ],
         ),
       ),
     );
   }
 
-  /// ステップ1: 旅の情報（タイトル・日程）
-  Widget _buildStepOne({Key? key}) {
+  Widget _buildContent() {
     return Column(
-      key: key,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // タイトル
         Row(
           children: [
             Container(
@@ -1744,14 +1636,13 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
         ),
         const SizedBox(height: AppSizes.paddingXS),
         Text(
-          'メンバーの希望を集めて旅を計画',
+          '旅のしおりを作りましょう',
           style: AppTypography.bodySmall.copyWith(
             color: AppColors.textSecondary,
           ),
         ),
         const SizedBox(height: AppSizes.paddingL),
 
-        // 旅行タイトル入力
         TextField(
           controller: _titleController,
           decoration: InputDecoration(
@@ -1763,11 +1654,10 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
             ),
           ),
           textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _goToStepTwo(),
+          onSubmitted: (_) => _createTrip(),
         ),
         const SizedBox(height: AppSizes.paddingM),
 
-        // 日程オプション
         InkWell(
           onTap: () {
             setState(() {
@@ -1818,7 +1708,6 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
           ),
         ),
 
-        // 日程選択
         if (!_isDateUndecided) ...[
           const SizedBox(height: AppSizes.paddingS),
           OutlinedButton.icon(
@@ -1848,118 +1737,6 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
 
         const SizedBox(height: AppSizes.paddingL),
 
-        // 次へボタン
-        ElevatedButton(
-          onPressed: () => _goToStepTwo(),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.accent,
-            minimumSize: const Size.fromHeight(52),
-          ),
-          child: Text(
-            '次へ',
-            style: AppTypography.button.copyWith(color: Colors.white),
-          ),
-        ),
-        const SizedBox(height: AppSizes.paddingS),
-      ],
-    );
-  }
-
-  /// ステップ2: あなたの情報（名前・出発地点）
-  Widget _buildStepTwo({Key? key}) {
-    return Column(
-      key: key,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // ヘッダー（戻るボタン付き）
-        Row(
-          children: [
-            GestureDetector(
-              onTap: () {
-                HapticFeedback.lightImpact();
-                setState(() => _currentStep = 0);
-              },
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.border.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                ),
-                child: Icon(
-                  Icons.arrow_back_rounded,
-                  color: AppColors.textSecondary,
-                  size: 20,
-                ),
-              ),
-            ),
-            const SizedBox(width: AppSizes.paddingS),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'あなたのことを教えてください',
-                    style: AppTypography.headlineSmall,
-                  ),
-                  Text(
-                    'メンバーに表示される情報です',
-                    style: AppTypography.caption.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSizes.paddingL),
-
-        // 名前入力
-        TextField(
-          controller: _nameController,
-          decoration: InputDecoration(
-            labelText: 'ニックネーム',
-            hintText: '例: たろう',
-            prefixIcon: Icon(
-              Icons.person_outline,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          textCapitalization: TextCapitalization.words,
-          textInputAction: TextInputAction.next,
-          onSubmitted: (_) => _departureFocus.requestFocus(),
-          autofocus: true,
-        ),
-        const SizedBox(height: AppSizes.paddingM),
-
-        // 出発地点入力
-        TextField(
-          controller: _departureController,
-          focusNode: _departureFocus,
-          decoration: InputDecoration(
-            labelText: '出発地点',
-            hintText: '例: 東京駅、新宿など',
-            prefixIcon: Icon(
-              Icons.location_on_outlined,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _createTrip(),
-        ),
-        const SizedBox(height: AppSizes.paddingXS),
-        Text(
-          '※ AIが交通費や移動時間を考慮したプランを作成します',
-          style: AppTypography.caption.copyWith(
-            color: AppColors.textSecondary,
-          ),
-        ),
-
-        const SizedBox(height: AppSizes.paddingL),
-
-        // 旅を始めるボタン
         ElevatedButton(
           onPressed: _isLoading ? null : () => _createTrip(),
           style: ElevatedButton.styleFrom(
@@ -1978,9 +1755,7 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
                   )
                   : Text(
                     '旅を始める',
-                    style: AppTypography.button.copyWith(
-                      color: Colors.white,
-                    ),
+                    style: AppTypography.button.copyWith(color: Colors.white),
                   ),
         ),
         const SizedBox(height: AppSizes.paddingS),
@@ -2006,67 +1781,9 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
     );
   }
 
-  void _goToStepTwo() {
-    HapticFeedback.lightImpact();
-    setState(() => _currentStep = 1);
-  }
-
-  /// ユーザー情報を保存（name_input_dialog.dart と同じパターン）
-  void _saveUserInfo(String name, String? departure) {
-    ref.read(guestSessionProvider.notifier).setUserInfo(
-      name: name,
-      departurePoint: departure,
-    );
-
-    final isGuest = ref.read(isGuestModeProvider);
-    final isAuthenticated = ref.read(isAuthenticatedProvider);
-    if (isGuest && !isAuthenticated) {
-      final userId = ref.read(currentUserIdProvider);
-      if (userId != null) {
-        final localProfile = ref.read(localProfileProvider);
-        if (localProfile != null) {
-          ref
-              .read(localProfileProvider.notifier)
-              .updateProfile(displayName: name);
-        } else {
-          final now = DateTime.now();
-          ref
-              .read(localProfileProvider.notifier)
-              .setProfile(
-                UserProfileModel(
-                  userId: userId,
-                  displayName: name,
-                  createdAt: now,
-                  updatedAt: now,
-                ),
-              );
-        }
-      }
-    }
-  }
-
   Future<void> _createTrip() async {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('名前を入力してください'),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppSizes.radiusM),
-          ),
-        ),
-      );
-      return;
-    }
-
     var title = _titleController.text.trim();
-    if (title.isEmpty) {
-      title = '新しい旅';
-    }
-
-    final departure = _departureController.text.trim();
-    _saveUserInfo(name, departure.isNotEmpty ? departure : null);
+    if (title.isEmpty) title = '新しい旅';
 
     setState(() => _isLoading = true);
 
@@ -2077,21 +1794,20 @@ class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
             title: title,
             startDate: _dateRange?.start,
             endDate: _dateRange?.end,
-            ownerName: name,
-            ownerDeparture: departure.isNotEmpty ? departure : null,
           );
 
       if (mounted) {
         if (tripId != null) {
-          // 成功アニメーション表示
           setState(() => _showSuccess = true);
           HapticFeedback.mediumImpact();
           await Future.delayed(const Duration(milliseconds: 600));
           if (mounted) {
-            Navigator.of(context).pop();
-            if (context.mounted) {
-              context.go('/trip/$tripId/lobby');
-            }
+            Navigator.of(context).pop((
+              tripId: tripId,
+              title: title,
+              startDate: _dateRange?.start,
+              endDate: _dateRange?.end,
+            ));
           }
         } else {
           ScaffoldMessenger.of(context).showSnackBar(

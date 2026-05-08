@@ -177,19 +177,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
     );
   }
 
-  /// 旅行のステータスに応じた遷移先パスを返す
-  String _routeForStatus(TripStatus status) {
-    switch (status) {
-      case TripStatus.lobby:
-        return '/trip/${widget.tripId}/lobby';
-      case TripStatus.collecting:
-        return '/trip/${widget.tripId}';
-      case TripStatus.voting:
-      case TripStatus.confirmed:
-      case TripStatus.ongoing:
-        return '/trip/${widget.tripId}/plan';
-    }
-  }
+
 
   Future<bool> _joinTrip() async {
     setState(() => _isJoining = true);
@@ -201,7 +189,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
         ref
             .read(guestSessionProvider.notifier)
             .setName(_existingMember!.displayName);
-        context.go(_routeForStatus(_trip!.status));
+        context.go('/');
         return true;
       }
 
@@ -234,7 +222,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
         }
         if (!context.mounted) return true;
         // ignore: use_build_context_synchronously
-        context.go(_routeForStatus(_trip!.status));
+        context.go('/');
         return true;
       } else {
         // ignore: use_build_context_synchronously
