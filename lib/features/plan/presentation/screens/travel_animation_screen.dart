@@ -153,6 +153,10 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     _initVehicleManager();
   }
 
+  Future<void> _onStyleLoaded(StyleLoadedEventData _) async {
+    await _mapboxMap?.style.localizeLabels('ja', null);
+  }
+
   Future<void> _initVehicleManager() async {
     _vehicleAnnotationManager =
         await _mapboxMap!.annotations.createPointAnnotationManager();
@@ -620,6 +624,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
               key: const ValueKey('mapWidget'),
               styleUri: mapStyle,
               onMapCreated: _onMapCreated,
+              onStyleLoadedListener: _onStyleLoaded,
             ),
 
           // 上部グラデーション（テキスト可読性のため）
