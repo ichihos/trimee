@@ -34,6 +34,9 @@ mixin _$TripModel {
 
   /// しおりのプランID（1トリップに1プラン）
   String? get planId => throw _privateConstructorUsedError;
+
+  /// カバー画像URL
+  String? get imageUrl => throw _privateConstructorUsedError;
   DateTime get createdAt => throw _privateConstructorUsedError;
   DateTime get updatedAt => throw _privateConstructorUsedError;
 
@@ -61,6 +64,7 @@ abstract class $TripModelCopyWith<$Res> {
     DateTime? startDate,
     DateTime? endDate,
     String? planId,
+    String? imageUrl,
     DateTime createdAt,
     DateTime updatedAt,
   });
@@ -89,6 +93,7 @@ class _$TripModelCopyWithImpl<$Res, $Val extends TripModel>
     Object? startDate = freezed,
     Object? endDate = freezed,
     Object? planId = freezed,
+    Object? imageUrl = freezed,
     Object? createdAt = null,
     Object? updatedAt = null,
   }) {
@@ -134,6 +139,11 @@ class _$TripModelCopyWithImpl<$Res, $Val extends TripModel>
                     ? _value.planId
                     : planId // ignore: cast_nullable_to_non_nullable
                         as String?,
+            imageUrl:
+                freezed == imageUrl
+                    ? _value.imageUrl
+                    : imageUrl // ignore: cast_nullable_to_non_nullable
+                        as String?,
             createdAt:
                 null == createdAt
                     ? _value.createdAt
@@ -168,6 +178,7 @@ abstract class _$$TripModelImplCopyWith<$Res>
     DateTime? startDate,
     DateTime? endDate,
     String? planId,
+    String? imageUrl,
     DateTime createdAt,
     DateTime updatedAt,
   });
@@ -195,6 +206,7 @@ class __$$TripModelImplCopyWithImpl<$Res>
     Object? startDate = freezed,
     Object? endDate = freezed,
     Object? planId = freezed,
+    Object? imageUrl = freezed,
     Object? createdAt = null,
     Object? updatedAt = null,
   }) {
@@ -240,6 +252,11 @@ class __$$TripModelImplCopyWithImpl<$Res>
                 ? _value.planId
                 : planId // ignore: cast_nullable_to_non_nullable
                     as String?,
+        imageUrl:
+            freezed == imageUrl
+                ? _value.imageUrl
+                : imageUrl // ignore: cast_nullable_to_non_nullable
+                    as String?,
         createdAt:
             null == createdAt
                 ? _value.createdAt
@@ -267,6 +284,7 @@ class _$TripModelImpl implements _TripModel {
     this.startDate,
     this.endDate,
     this.planId,
+    this.imageUrl,
     required this.createdAt,
     required this.updatedAt,
   }) : _members = members,
@@ -310,6 +328,10 @@ class _$TripModelImpl implements _TripModel {
   /// しおりのプランID（1トリップに1プラン）
   @override
   final String? planId;
+
+  /// カバー画像URL
+  @override
+  final String? imageUrl;
   @override
   final DateTime createdAt;
   @override
@@ -317,7 +339,7 @@ class _$TripModelImpl implements _TripModel {
 
   @override
   String toString() {
-    return 'TripModel(id: $id, title: $title, createdBy: $createdBy, members: $members, memberDetails: $memberDetails, startDate: $startDate, endDate: $endDate, planId: $planId, createdAt: $createdAt, updatedAt: $updatedAt)';
+    return 'TripModel(id: $id, title: $title, createdBy: $createdBy, members: $members, memberDetails: $memberDetails, startDate: $startDate, endDate: $endDate, planId: $planId, imageUrl: $imageUrl, createdAt: $createdAt, updatedAt: $updatedAt)';
   }
 
   @override
@@ -338,6 +360,8 @@ class _$TripModelImpl implements _TripModel {
                 other.startDate == startDate) &&
             (identical(other.endDate, endDate) || other.endDate == endDate) &&
             (identical(other.planId, planId) || other.planId == planId) &&
+            (identical(other.imageUrl, imageUrl) ||
+                other.imageUrl == imageUrl) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt) &&
             (identical(other.updatedAt, updatedAt) ||
@@ -356,6 +380,7 @@ class _$TripModelImpl implements _TripModel {
     startDate,
     endDate,
     planId,
+    imageUrl,
     createdAt,
     updatedAt,
   );
@@ -384,6 +409,7 @@ abstract class _TripModel implements TripModel {
     final DateTime? startDate,
     final DateTime? endDate,
     final String? planId,
+    final String? imageUrl,
     required final DateTime createdAt,
     required final DateTime updatedAt,
   }) = _$TripModelImpl;
@@ -411,6 +437,10 @@ abstract class _TripModel implements TripModel {
   /// しおりのプランID（1トリップに1プラン）
   @override
   String? get planId;
+
+  /// カバー画像URL
+  @override
+  String? get imageUrl;
   @override
   DateTime get createdAt;
   @override

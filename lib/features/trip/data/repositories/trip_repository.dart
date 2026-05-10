@@ -111,6 +111,14 @@ class TripRepository {
     });
   }
 
+  /// カバー画像URLを更新
+  Future<void> updateTripImageUrl(String tripId, String? imageUrl) async {
+    await _tripsCollection.doc(tripId).update({
+      'imageUrl': imageUrl,
+      'updatedAt': Timestamp.now(),
+    });
+  }
+
   /// しおりを削除
   Future<void> deleteTrip(String tripId) async {
     await _tripsCollection.doc(tripId).delete();

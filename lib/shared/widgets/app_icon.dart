@@ -230,6 +230,77 @@ class TripTypeIcon extends StatelessWidget {
   }
 }
 
+/// トリップアイコンアセットの定義
+class TripIconAssets {
+  TripIconAssets._();
+
+  static const all = [
+    'beach', 'camp', 'city', 'festival', 'food',
+    'hotspring', 'mountain', 'shrine', 'ski', 'travel',
+  ];
+
+  static String path(String name) => 'assets/images/icons/icon_$name.png';
+
+  /// タイトルからアイコン名を推定
+  static String fromTitle(String title) {
+    final t = title.toLowerCase();
+    if (t.contains('沖縄') || t.contains('海') || t.contains('ビーチ')) return 'beach';
+    if (t.contains('山') || t.contains('登山') || t.contains('ハイキング')) return 'mountain';
+    if (t.contains('温泉') || t.contains('箱根') || t.contains('草津')) return 'hotspring';
+    if (t.contains('京都') || t.contains('寺') || t.contains('神社')) return 'shrine';
+    if (t.contains('東京') || t.contains('都会')) return 'city';
+    if (t.contains('雪') || t.contains('スキー') || t.contains('スノボ')) return 'ski';
+    if (t.contains('キャンプ') || t.contains('アウトドア')) return 'camp';
+    if (t.contains('祭') || t.contains('フェス')) return 'festival';
+    if (t.contains('グルメ') || t.contains('食') || t.contains('ラーメン')) return 'food';
+    return 'travel';
+  }
+
+  /// tripId からの決定論的ランダム選択（未設定時に毎回同じアイコンになるように）
+  static String fromTripId(String tripId) {
+    final hash = tripId.hashCode.abs();
+    return all[hash % all.length];
+  }
+
+  static const _keywords = {
+    'beach':     ['沖縄', '海', 'ビーチ', '離島', '宮古', '石垣', '湘南', '水族館'],
+    'mountain':  ['山', '登山', 'ハイキング', '富士', 'アルプス', '高原', '渓谷'],
+    'hotspring': ['温泉', '箱根', '草津', '別府', '熱海', '湯', '露天'],
+    'shrine':    ['京都', '寺', '神社', '鳥居', '奈良', '参拝', '御朱印', '仏閣'],
+    'city':      ['東京', '都会', '渋谷', '新宿', '大阪', '横浜', 'ショッピング', '買い物'],
+    'ski':       ['雪', 'スキー', 'スノボ', 'ゲレンデ', 'ニセコ', '白馬'],
+    'camp':      ['キャンプ', 'アウトドア', 'テント', 'BBQ', 'バーベキュー', 'グランピング'],
+    'festival':  ['祭', 'フェス', '花火', 'イベント', 'ライブ'],
+    'food':      ['グルメ', '食べ歩き', 'ラーメン', 'カフェ', 'ワイン', 'ワイナリー', '居酒屋', '寿司', '焼肉', '市場', 'レストラン', '食'],
+  };
+
+  /// プランのアイテム内容からアイコンを推定（スコアリング）
+  static String fromPlanItems(List<dynamic> items) {
+    final scores = <String, int>{};
+    final buf = StringBuffer();
+    for (final item in items) {
+      buf.write(item.location);
+      buf.write(' ');
+      if (item.notes != null) {
+        buf.write(item.notes);
+        buf.write(' ');
+      }
+    }
+    final text = buf.toString().toLowerCase();
+
+    for (final entry in _keywords.entries) {
+      var score = 0;
+      for (final kw in entry.value) {
+        if (text.contains(kw.toLowerCase())) score++;
+      }
+      if (score > 0) scores[entry.key] = score;
+    }
+
+    if (scores.isEmpty) return 'travel';
+    return scores.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  }
+}
+
 /// プランタイプに応じたアイコンを返すヘルパー
 class PlanTypeIcon extends StatelessWidget {
   const PlanTypeIcon({

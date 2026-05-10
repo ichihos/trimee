@@ -29,6 +29,7 @@ _$TripModelImpl _$$TripModelImplFromJson(
           ? null
           : DateTime.parse(json['endDate'] as String),
   planId: json['planId'] as String?,
+  imageUrl: json['imageUrl'] as String?,
   createdAt: DateTime.parse(json['createdAt'] as String),
   updatedAt: DateTime.parse(json['updatedAt'] as String),
 );
@@ -43,6 +44,7 @@ Map<String, dynamic> _$$TripModelImplToJson(_$TripModelImpl instance) =>
       'startDate': instance.startDate?.toIso8601String(),
       'endDate': instance.endDate?.toIso8601String(),
       'planId': instance.planId,
+      'imageUrl': instance.imageUrl,
       'createdAt': instance.createdAt.toIso8601String(),
       'updatedAt': instance.updatedAt.toIso8601String(),
     };

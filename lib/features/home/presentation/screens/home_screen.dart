@@ -15,6 +15,7 @@ import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/widgets/app_card.dart';
 import '../../../../shared/widgets/app_icon.dart';
 import '../../../../shared/widgets/empty_state.dart';
+import '../../../../shared/widgets/trip_image_picker.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../plan/presentation/providers/plan_provider.dart';
 import '../../../plan/presentation/screens/plan_edit_screen.dart';
@@ -1252,15 +1253,19 @@ class _SwipeTripCardState extends State<_SwipeTripCard>
 }
 
 /// 旅行カード
-class _TripCard extends StatelessWidget {
+class _TripCard extends ConsumerWidget {
   const _TripCard({required this.trip, required this.onTap, this.margin});
 
   final TripModel trip;
   final VoidCallback onTap;
   final EdgeInsetsGeometry? margin;
 
+  void _showImagePicker(BuildContext context, WidgetRef ref) {
+    showTripImagePicker(context, tripId: trip.id, currentImageUrl: trip.imageUrl);
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return AppCard(
       onTap: onTap,
       margin: margin,
@@ -1268,12 +1273,14 @@ class _TripCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 上部: タイトルと日程
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 旅行タイプアイコン
-              TripTypeIcon(title: trip.title, size: 48),
+              // カバー画像 or デフォルトアイコン
+              GestureDetector(
+                onTap: () => _showImagePicker(context, ref),
+                child: _TripCoverImage(trip: trip),
+              ),
               const SizedBox(width: AppSizes.paddingM),
               Expanded(
                 child: Column(
@@ -1303,7 +1310,6 @@ class _TripCard extends StatelessWidget {
                   ],
                 ),
               ),
-              // しおり有無インジケーター
               if (trip.planId != null)
                 Container(
                   padding: const EdgeInsets.all(6),
@@ -1324,17 +1330,73 @@ class _TripCard extends StatelessWidget {
           Divider(height: 1, color: AppColors.border),
           const SizedBox(height: AppSizes.paddingM),
 
-          // 下部: メンバー
           Row(
             children: [
-              // メンバーアバター（イニシャル表示）
               _TripMemberAvatars(trip: trip),
               const Spacer(),
-              // ステータスバッジ
               _StatusBadge(hasPlan: trip.planId != null),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// カバー画像 or デフォルトアイコン
+class _TripCoverImage extends StatelessWidget {
+  const _TripCoverImage({required this.trip});
+  final TripModel trip;
+
+  static const _size = 52.0;
+  static const _radius = 14.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = trip.imageUrl;
+
+    // カスタム写真が設定されている場合
+    if (imageUrl != null && imageUrl.startsWith('http')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(_radius),
+        child: Image.network(
+          imageUrl,
+          width: _size,
+          height: _size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildAssetIcon(),
+        ),
+      );
+    }
+
+    // アイコン名が設定されている場合（icon:beach 等）
+    if (imageUrl != null && imageUrl.startsWith('icon:')) {
+      final name = imageUrl.substring(5);
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(_radius),
+        child: Image.asset(
+          TripIconAssets.path(name),
+          width: _size,
+          height: _size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildAssetIcon(),
+        ),
+      );
+    }
+
+    // 未設定 → タイトルから推定したアセットアイコン
+    return _buildAssetIcon();
+  }
+
+  Widget _buildAssetIcon() {
+    final iconName = TripIconAssets.fromTitle(trip.title);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(_radius),
+      child: Image.asset(
+        TripIconAssets.path(iconName),
+        width: _size,
+        height: _size,
+        fit: BoxFit.cover,
       ),
     );
   }

@@ -16,6 +16,9 @@ import '../../../../shared/services/plan_export_service.dart';
 import '../../../../shared/utils/file_saver.dart' as file_saver;
 import '../../../../shared/providers/ad_provider.dart';
 import '../../../../shared/widgets/animated_widgets.dart';
+import '../../../../shared/widgets/app_icon.dart';
+import '../../../../shared/widgets/trip_image_picker.dart';
+import '../../../trip/presentation/providers/trip_provider.dart';
 import '../providers/plan_provider.dart';
 import 'plan_view_screen.dart';
 import 'travel_animation_screen.dart';
@@ -60,6 +63,9 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
 
   // 画像インポート用
   bool _isAnalyzing = false;
+
+  // アイコン自動設定用
+  bool _hasCheckedAutoIcon = false;
 
   @override
   void initState() {
@@ -186,6 +192,18 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
             items: _items,
             editedByName: profile?.displayName,
           );
+
+      // アイコン未設定時に内容から自動判定
+      if (!_hasCheckedAutoIcon && _items.isNotEmpty) {
+        _hasCheckedAutoIcon = true;
+        final trip = ref.read(tripDetailProvider(widget.tripId)).valueOrNull;
+        if (trip != null && trip.imageUrl == null) {
+          final iconName = TripIconAssets.fromPlanItems(_items);
+          await ref
+              .read(tripRepositoryProvider)
+              .updateTripImageUrl(widget.tripId, 'icon:$iconName');
+        }
+      }
 
       _lastSaveTime = DateTime.now();
       if (mounted) {
@@ -677,24 +695,32 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.background,
         surfaceTintColor: Colors.transparent,
-        title: SizedBox(
-          height: 36,
-          child: TextField(
-            controller: _titleController,
-            style: AppTypography.titleMedium,
-            decoration: InputDecoration(
-              hintText: 'しおりのタイトル',
-              hintStyle: AppTypography.titleMedium.copyWith(color: AppColors.textSecondary),
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.zero,
-              isDense: true,
+        title: Row(
+          children: [
+            _TripIconButton(tripId: widget.tripId),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: TextField(
+                  controller: _titleController,
+                  style: AppTypography.titleMedium,
+                  decoration: InputDecoration(
+                    hintText: 'しおりのタイトル',
+                    hintStyle: AppTypography.titleMedium.copyWith(color: AppColors.textSecondary),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => _saveTitle(),
+                  onTapOutside: (_) {
+                    FocusScope.of(context).unfocus();
+                    _saveTitle();
+                  },
+                ),
+              ),
             ),
-            onSubmitted: (_) => _saveTitle(),
-            onTapOutside: (_) {
-              FocusScope.of(context).unfocus();
-              _saveTitle();
-            },
-          ),
+          ],
         ),
         actions: [
           if (_showSaveIndicator)
@@ -1145,6 +1171,73 @@ class _ItemTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// AppBar用のアイコンボタン（タップでピッカーを開く）
+class _TripIconButton extends ConsumerWidget {
+  const _TripIconButton({required this.tripId});
+  final String tripId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final trip = ref.watch(tripDetailProvider(tripId)).valueOrNull;
+    final imageUrl = trip?.imageUrl;
+
+    Widget icon;
+    if (imageUrl != null && imageUrl.startsWith('icon:')) {
+      final name = imageUrl.substring(5);
+      icon = ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.asset(
+          TripIconAssets.path(name),
+          width: 32,
+          height: 32,
+          fit: BoxFit.cover,
+        ),
+      );
+    } else if (imageUrl != null && imageUrl.startsWith('http')) {
+      icon = ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          imageUrl,
+          width: 32,
+          height: 32,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _defaultIcon(),
+        ),
+      );
+    } else {
+      icon = _defaultIcon();
+    }
+
+    return GestureDetector(
+      onTap: () => showTripImagePicker(
+        context,
+        tripId: tripId,
+        currentImageUrl: imageUrl,
+      ),
+      child: icon,
+    );
+  }
+
+  Widget _defaultIcon() {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.accent.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Icon(
+        Icons.image_outlined,
+        size: 18,
+        color: AppColors.accent,
       ),
     );
   }

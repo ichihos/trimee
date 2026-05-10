@@ -358,51 +358,61 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
           ),
         ],
       ),
-      body: RepaintBoundary(
-        key: _exportKey,
-        child: items.isEmpty
-            ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.auto_stories_outlined, size: 64, color: AppColors.textSecondary.withValues(alpha: 0.4)),
-                    const SizedBox(height: AppSizes.paddingM),
-                    Text('まだ予定がありません', style: AppTypography.bodyMedium.copyWith(color: AppColors.textSecondary)),
-                    const SizedBox(height: AppSizes.paddingL),
-                    ElevatedButton.icon(
-                      onPressed: _openEditScreen,
-                      icon: const Icon(Icons.add),
-                      label: const Text('予定を追加'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.accent,
-                        foregroundColor: Colors.white,
-                      ),
+      body: items.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.auto_stories_outlined, size: 64, color: AppColors.textSecondary.withValues(alpha: 0.4)),
+                  const SizedBox(height: AppSizes.paddingM),
+                  Text('まだ予定がありません', style: AppTypography.bodyMedium.copyWith(color: AppColors.textSecondary)),
+                  const SizedBox(height: AppSizes.paddingL),
+                  ElevatedButton.icon(
+                    onPressed: _openEditScreen,
+                    icon: const Icon(Icons.add),
+                    label: const Text('予定を追加'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                      foregroundColor: Colors.white,
                     ),
-                  ],
-                ),
-              )
-            : SingleChildScrollView(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(AppSizes.paddingM, 0, AppSizes.paddingM, AppSizes.paddingXL),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final day in sortedDays) ...[
-                      _ShioriDayHeader(
-                        label: _dayDateLabel(day),
-                        isToday: _isTodayDay(day),
-                      ),
-                      for (final item in dayGroups[day]!)
-                        _ShioriItemCard(
-                          item: item,
-                          isCurrent: _isCurrentItem(item),
-                          isPast: _isPastItem(item),
+                  ),
+                ],
+              ),
+            )
+          : SingleChildScrollView(
+              controller: _scrollController,
+              padding: const EdgeInsets.fromLTRB(AppSizes.paddingM, 0, AppSizes.paddingM, AppSizes.paddingXL),
+              child: RepaintBoundary(
+                key: _exportKey,
+                child: Container(
+                  color: AppColors.background,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final day in sortedDays) ...[
+                        _ShioriDayHeader(
+                          label: _dayDateLabel(day),
+                          isToday: _isTodayDay(day),
                         ),
+                        for (final item in dayGroups[day]!)
+                          _ShioriItemCard(
+                            item: item,
+                            isCurrent: _isCurrentItem(item),
+                            isPast: _isPastItem(item),
+                          ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-      ),
+            ),
+      floatingActionButton: items.isNotEmpty
+          ? FloatingActionButton(
+              onPressed: _openEditScreen,
+              backgroundColor: AppColors.accent,
+              child: const Icon(Icons.edit_outlined, color: Colors.white),
+            )
+          : null,
     );
   }
 }
@@ -501,40 +511,43 @@ class _ShioriItemCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 時間
-              Column(
-                children: [
-                  Text(
-                    item.time,
-                    style: AppTypography.labelMedium.copyWith(
-                      color: isCurrent ? AppColors.accent : AppColors.textSecondary,
-                      fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
-                    ),
-                  ),
-                  if (isCurrent) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppColors.accent,
-                        borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+              SizedBox(
+                width: 56,
+                child: Column(
+                  children: [
+                    Text(
+                      item.time,
+                      style: AppTypography.titleMedium.copyWith(
+                        color: isCurrent ? AppColors.accent : AppColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
                       ),
-                      child: Text(
-                        'NOW',
-                        style: AppTypography.caption.copyWith(
-                          color: Colors.white, fontWeight: FontWeight.w700, fontSize: 9,
+                    ),
+                    if (isCurrent) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.accent,
+                          borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+                        ),
+                        child: Text(
+                          'NOW',
+                          style: AppTypography.caption.copyWith(
+                            color: Colors.white, fontWeight: FontWeight.w700, fontSize: 9,
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
-              const SizedBox(width: AppSizes.paddingM),
               // タイムライン
               Container(
                 width: 2,
                 height: 60,
                 decoration: BoxDecoration(
-                  color: isCurrent ? AppColors.accent : AppColors.border.withValues(alpha: 0.5),
+                  color: isCurrent ? AppColors.accent : AppColors.border,
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
@@ -544,58 +557,62 @@ class _ShioriItemCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                      Text(
-                        item.location.isEmpty ? '（未定）' : item.location,
-                        style: AppTypography.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600, fontSize: isCurrent ? 16 : 14,
-                        ),
+                    Text(
+                      item.location.isEmpty ? '（未定）' : item.location,
+                      style: AppTypography.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        color: AppColors.textPrimary,
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(Icons.schedule, size: 14, color: AppColors.textSecondary),
-                          const SizedBox(width: 4),
-                          Text('${item.durationMinutes}分',
-                            style: AppTypography.caption.copyWith(color: AppColors.textSecondary)),
-                        ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.schedule, size: 15, color: AppColors.textSecondary),
+                        const SizedBox(width: 4),
+                        Text('${item.durationMinutes}分',
+                          style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary)),
+                      ],
+                    ),
+                    if (item.notes != null && item.notes!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.background.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(AppSizes.radiusS),
+                        ),
+                        child: Text(item.notes!,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textPrimary.withValues(alpha: 0.7),
+                            height: 1.5,
+                          ),
+                          maxLines: 4, overflow: TextOverflow.ellipsis),
                       ),
-                      if (item.notes != null && item.notes!.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppColors.background.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(AppSizes.radiusS),
-                          ),
-                          child: Text(item.notes!,
-                            style: AppTypography.caption.copyWith(color: AppColors.textSecondary),
-                            maxLines: 3, overflow: TextOverflow.ellipsis),
-                        ),
-                      ],
-                      if (item.isBooked) ...[
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(AppSizes.radiusFull),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.check_circle, size: 14, color: Colors.green[600]),
-                              const SizedBox(width: 4),
-                              Text('予約済み',
-                                style: AppTypography.caption.copyWith(
-                                  color: Colors.green[600], fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
-                      ],
                     ],
-                  ),
+                    if (item.isBooked) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle, size: 14, color: Colors.green[600]),
+                            const SizedBox(width: 4),
+                            Text('予約済み',
+                              style: AppTypography.bodySmall.copyWith(
+                                color: Colors.green[600], fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-              // end Expanded
+              ),
             ],
           ),
         ),

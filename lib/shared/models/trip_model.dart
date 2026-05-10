@@ -22,6 +22,9 @@ class TripModel with _$TripModel {
     /// しおりのプランID（1トリップに1プラン）
     String? planId,
 
+    /// カバー画像URL
+    String? imageUrl,
+
     required DateTime createdAt,
     required DateTime updatedAt,
   }) = _TripModel;
@@ -58,6 +61,7 @@ class TripModel with _$TripModel {
               ? (data['endDate'] as Timestamp).toDate()
               : null,
       planId: data['planId'] ?? data['confirmedPlanId'] ?? data['editingPlanId'],
+      imageUrl: data['imageUrl'] as String?,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       updatedAt: (data['updatedAt'] as Timestamp).toDate(),
     );
@@ -79,6 +83,7 @@ extension TripModelExtension on TripModel {
       'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
       'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
       'planId': planId,
+      'imageUrl': imageUrl,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
