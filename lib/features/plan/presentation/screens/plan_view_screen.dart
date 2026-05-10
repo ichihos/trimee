@@ -343,14 +343,14 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.background,
         surfaceTintColor: Colors.transparent,
-        title: Text(widget.plan.title, style: AppTypography.titleMedium),
+        title: Text(
+          widget.plan.title,
+          style: AppTypography.titleMedium,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        titleSpacing: 0,
         actions: [
-          // 編集ボタン
-          IconButton(
-            icon: Icon(Icons.edit_outlined, color: AppColors.textSecondary),
-            tooltip: '編集',
-            onPressed: _openEditScreen,
-          ),
           // エクスポート
           IconButton(
             icon: Icon(Icons.ios_share_outlined, color: AppColors.textSecondary),
