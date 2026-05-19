@@ -4,13 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../../core/constants/ad_constants.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/providers/theme_provider.dart';
-import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../../shared/models/trip_model.dart';
 import '../../../../shared/widgets/app_card.dart';
 import '../../../../shared/widgets/app_icon.dart';
@@ -41,7 +41,8 @@ class HomeScreen extends ConsumerWidget {
             SliverToBoxAdapter(
               child: _HomeHeader(
                 onCreateTrip: () => _showCreateTripDialog(context, ref),
-                onJoinTrip: () => _showJoinTripDialog(context),
+                onShareTrip: () => _showShareTripPicker(context, ref),
+                onShareApp: () => _shareApp(context),
               ),
             ),
 
@@ -55,8 +56,6 @@ class HomeScreen extends ConsumerWidget {
                       icon: Icons.luggage_outlined,
                       actionLabel: AppStrings.createFirstTrip,
                       action: () => _showCreateTripDialog(context, ref),
-                      secondaryActionLabel: '旅に参加する',
-                      secondaryAction: () => _showJoinTripDialog(context),
                     ),
                   );
                 }
@@ -171,149 +170,224 @@ class HomeScreen extends ConsumerWidget {
   }
 
   Future<void> _showCreateTripDialog(BuildContext context, WidgetRef ref) async {
-    final result = await showModalBottomSheet<({String tripId, String title, DateTime? startDate, DateTime? endDate})>(
+    final method = await showModalBottomSheet<String>(
       context: context,
-      isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => const _CreateTripSheet(),
-    );
-
-    if (result != null && context.mounted) {
-      try {
-        final planId = await ref
-            .read(planControllerProvider.notifier)
-            .createPlan(
-              tripId: result.tripId,
-              title: result.title,
-            );
-        if (planId != null && context.mounted) {
-          final plan = await ref
-              .read(planRepositoryProvider)
-              .getPlan(result.tripId, planId);
-          if (plan != null && context.mounted) {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => PlanEditScreen(
-                  tripId: result.tripId,
-                  plan: plan,
-                  tripTitle: result.title,
-                  startDate: result.startDate,
-                  endDate: result.endDate,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(AppSizes.paddingM),
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            );
-          }
-        }
-      } catch (e) {
-        debugPrint('Error creating plan: $e');
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingL),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40, height: 40,
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                      ),
+                      child: const Icon(Icons.flight_takeoff_rounded, color: AppColors.accent, size: 22),
+                    ),
+                    const SizedBox(width: AppSizes.paddingS),
+                    Text(AppStrings.newTrip, style: AppTypography.headlineSmall),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingXS),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingL),
+                child: Text(
+                  'しおりの作り方を選んでください',
+                  style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingL),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _CreateMethodCard(
+                        icon: Icons.edit_outlined,
+                        label: '手動で作成',
+                        subtitle: '予定をひとつずつ追加',
+                        onTap: () => Navigator.pop(ctx, 'manual'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSizes.paddingM),
+                    Expanded(
+                      child: _CreateMethodCard(
+                        icon: Icons.photo_camera_outlined,
+                        label: '画像から読み取り',
+                        subtitle: '写真やスクショから',
+                        onTap: () => Navigator.pop(ctx, 'image'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingL),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (method == null || !context.mounted) return;
+
+    try {
+      final tripId = await ref
+          .read(tripControllerProvider.notifier)
+          .createTrip(title: '');
+
+      if (tripId == null || !context.mounted) return;
+
+      final planId = await ref
+          .read(planControllerProvider.notifier)
+          .createPlan(tripId: tripId, title: '');
+
+      if (planId == null || !context.mounted) return;
+
+      final plan = await ref
+          .read(planRepositoryProvider)
+          .getPlan(tripId, planId);
+
+      if (plan != null && context.mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PlanEditScreen(
+              tripId: tripId,
+              plan: plan,
+              autoImportImage: method == 'image',
+            ),
+          ),
+        );
       }
+    } catch (e) {
+      debugPrint('Error creating trip: $e');
     }
   }
 
-  /// 入力値からトリップIDを抽出（URLが貼られた場合も対応）
-  String _extractTripId(String input) {
-    // URL形式の場合: https://trimee-ai.com/join/{tripId} or /join/{tripId}
-    final urlMatch = RegExp(r'/join/([^/\s?#]+)').firstMatch(input);
-    if (urlMatch != null) return urlMatch.group(1)!;
-    return input;
-  }
+  void _showShareTripPicker(BuildContext context, WidgetRef ref) {
+    final tripsAsync = ref.read(userTripsProvider);
+    final trips = tripsAsync.valueOrNull ?? [];
+    final tripsWithPlan = trips.where((t) => t.planId != null).toList();
 
-  void _showJoinTripDialog(BuildContext context) {
-    final controller = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.cardBackground,
+    if (tripsWithPlan.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('共有できるしおりがありません'),
+          behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppSizes.radiusL),
+            borderRadius: BorderRadius.circular(AppSizes.radiusM),
           ),
-          insetPadding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            top: 24,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          title: Text('旅に参加する', style: AppTypography.titleMedium),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'メンバーから共有されたトリップIDを入力してください',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
+        ),
+      );
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(AppSizes.paddingM),
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                const SizedBox(height: AppSizes.paddingM),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  textInputAction: TextInputAction.go,
-                  decoration: InputDecoration(
-                    hintText: 'トリップID',
-                    hintStyle: TextStyle(color: AppColors.textSecondary),
-                    filled: true,
-                    fillColor: AppColors.background,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                      borderSide: BorderSide(color: AppColors.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                      borderSide: BorderSide(color: AppColors.border),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSizes.radiusM),
-                      borderSide: BorderSide(color: AppColors.accent),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: AppSizes.paddingM,
-                      vertical: AppSizes.paddingM,
-                    ),
-                  ),
-                  onSubmitted: (value) {
-                    final tripId = _extractTripId(value.trim());
-                    if (tripId.isNotEmpty) {
-                      Navigator.pop(ctx);
-                      context.push('/join/$tripId');
-                    }
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingL),
+                child: Row(
+                  children: [
+                    Icon(Icons.ios_share, color: AppColors.accent, size: 22),
+                    const SizedBox(width: AppSizes.paddingS),
+                    Text('共有するしおりを選択', style: AppTypography.titleMedium),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSizes.paddingM),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: tripsWithPlan.length,
+                  itemBuilder: (ctx, i) {
+                    final trip = tripsWithPlan[i];
+                    final iconName = trip.imageUrl?.startsWith('icon:') == true
+                        ? trip.imageUrl!.substring(5)
+                        : TripIconAssets.fromTitle(trip.title);
+                    return ListTile(
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.asset(
+                          TripIconAssets.path(iconName),
+                          width: 44, height: 44, fit: BoxFit.cover,
+                        ),
+                      ),
+                      title: Text(
+                        trip.title.isNotEmpty ? trip.title : TripIconAssets.displayName(iconName),
+                        style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: trip.startDate != null
+                          ? Text(trip.formattedDateRange, style: AppTypography.caption)
+                          : null,
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textSecondary, size: 20),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _navigateToPlan(context, ref, trip);
+                      },
+                    );
                   },
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(
-                'キャンセル',
-                style: AppTypography.labelMedium.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                final tripId = _extractTripId(controller.text.trim());
-                if (tripId.isNotEmpty) {
-                  Navigator.pop(ctx);
-                  context.push('/join/$tripId');
-                }
-              },
-              child: Text(
-                '参加する',
-                style: AppTypography.labelMedium.copyWith(
-                  color: AppColors.accent,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    ).then((_) => controller.dispose());
+        ),
+      ),
+    );
+  }
+
+  void _shareApp(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox?;
+    final sharePositionOrigin = box != null ? box.localToGlobal(Offset.zero) & box.size : null;
+    Share.share(
+      'trimee - 計画から、旅ははじまる\n旅の計画をもっと楽しく！\nhttps://apps.apple.com/app/trimee/id6744187498',
+      sharePositionOrigin: sharePositionOrigin,
+    );
   }
 
   /// しおりの適切な画面に遷移
@@ -500,10 +574,15 @@ class HomeScreen extends ConsumerWidget {
 
 /// ホームヘッダー
 class _HomeHeader extends ConsumerWidget {
-  const _HomeHeader({required this.onCreateTrip, required this.onJoinTrip});
+  const _HomeHeader({
+    required this.onCreateTrip,
+    required this.onShareTrip,
+    required this.onShareApp,
+  });
 
   final VoidCallback onCreateTrip;
-  final VoidCallback onJoinTrip;
+  final VoidCallback onShareTrip;
+  final VoidCallback onShareApp;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -540,7 +619,8 @@ class _HomeHeader extends ConsumerWidget {
             isLoggedIn: isLoggedIn,
             onSettings: () => _showSettingsSheet(context, ref),
             onLogin: () => context.go('/sign-in'),
-            onJoin: onJoinTrip,
+            onShareTrip: onShareTrip,
+            onShareApp: onShareApp,
           ),
         ],
       ),
@@ -609,13 +689,15 @@ class _HeaderMenuButton extends StatelessWidget {
     required this.isLoggedIn,
     required this.onSettings,
     required this.onLogin,
-    this.onJoin,
+    required this.onShareTrip,
+    required this.onShareApp,
   });
 
   final bool isLoggedIn;
   final VoidCallback onSettings;
   final VoidCallback onLogin;
-  final VoidCallback? onJoin;
+  final VoidCallback onShareTrip;
+  final VoidCallback onShareApp;
 
   void _showMenu(BuildContext context) async {
     final RenderBox button = context.findRenderObject() as RenderBox;
@@ -641,16 +723,30 @@ class _HeaderMenuButton extends StatelessWidget {
       items: [
         if (isLoggedIn) ...[
           PopupMenuItem(
-            value: 'join',
+            value: 'share_trip',
             child: Row(
               children: [
                 Icon(
-                  Icons.group_add_outlined,
+                  Icons.ios_share,
                   size: 20,
                   color: AppColors.textSecondary,
                 ),
                 const SizedBox(width: AppSizes.paddingS),
-                Text('旅に参加する', style: AppTypography.bodyMedium),
+                Text('しおりを共有する', style: AppTypography.bodyMedium),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'share_app',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.favorite_outline,
+                  size: 20,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: AppSizes.paddingS),
+                Text('アプリをシェアする', style: AppTypography.bodyMedium),
               ],
             ),
           ),
@@ -691,8 +787,10 @@ class _HeaderMenuButton extends StatelessWidget {
       onSettings();
     } else if (result == 'login') {
       onLogin();
-    } else if (result == 'join') {
-      onJoin?.call();
+    } else if (result == 'share_trip') {
+      onShareTrip();
+    } else if (result == 'share_app') {
+      onShareApp();
     }
   }
 
@@ -1264,78 +1362,68 @@ class _TripCard extends ConsumerWidget {
     showTripImagePicker(context, tripId: trip.id, currentImageUrl: trip.imageUrl);
   }
 
+  String _fallbackTitle(TripModel trip) {
+    final imageUrl = trip.imageUrl;
+    if (imageUrl != null && imageUrl.startsWith('icon:')) {
+      return TripIconAssets.displayName(imageUrl.substring(5));
+    }
+    return TripIconAssets.displayName(TripIconAssets.fromTitle(trip.title));
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return AppCard(
       onTap: onTap,
       margin: margin,
       padding: const EdgeInsets.all(AppSizes.paddingL),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // カバー画像 or デフォルトアイコン
-              GestureDetector(
-                onTap: () => _showImagePicker(context, ref),
-                child: _TripCoverImage(trip: trip),
-              ),
-              const SizedBox(width: AppSizes.paddingM),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      trip.title,
-                      style: AppTypography.titleMedium,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: AppSizes.paddingXS),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.calendar_today_outlined,
-                          size: 14,
-                          color: AppColors.textSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          trip.formattedDateRange,
-                          style: AppTypography.caption,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              if (trip.planId != null)
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: AppColors.subAccent.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.auto_stories_outlined,
-                    color: AppColors.subAccent,
-                    size: 16,
-                  ),
-                ),
-            ],
+          GestureDetector(
+            onTap: () => _showImagePicker(context, ref),
+            child: _TripCoverImage(trip: trip),
           ),
-
-          SizedBox(height: AppSizes.paddingM),
-          Divider(height: 1, color: AppColors.border),
-          const SizedBox(height: AppSizes.paddingM),
-
-          Row(
-            children: [
-              _TripMemberAvatars(trip: trip),
-              const Spacer(),
-              _StatusBadge(hasPlan: trip.planId != null),
-            ],
+          const SizedBox(width: AppSizes.paddingM),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  trip.title.isNotEmpty
+                      ? trip.title
+                      : _fallbackTitle(trip),
+                  style: AppTypography.titleMedium.copyWith(
+                    color: trip.title.isNotEmpty
+                        ? AppColors.textPrimary
+                        : AppColors.textSecondary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (trip.startDate != null) ...[
+                  const SizedBox(height: AppSizes.paddingXS),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.calendar_today_outlined,
+                        size: 14,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        trip.formattedDateRange,
+                        style: AppTypography.caption,
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Icon(
+            Icons.chevron_right,
+            color: AppColors.textSecondary.withValues(alpha: 0.4),
+            size: 22,
           ),
         ],
       ),
@@ -1348,8 +1436,8 @@ class _TripCoverImage extends StatelessWidget {
   const _TripCoverImage({required this.trip});
   final TripModel trip;
 
-  static const _size = 52.0;
-  static const _radius = 14.0;
+  static const _size = 80.0;
+  static const _radius = 18.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1397,156 +1485,6 @@ class _TripCoverImage extends StatelessWidget {
         width: _size,
         height: _size,
         fit: BoxFit.cover,
-      ),
-    );
-  }
-}
-
-/// メンバーアバター表示（ホーム画面トリップカード用）
-class _TripMemberAvatars extends StatelessWidget {
-  const _TripMemberAvatars({required this.trip});
-
-  final TripModel trip;
-
-  static const _avatarColors = [
-    Color(0xFF4285F4),
-    Color(0xFF34A853),
-    Color(0xFFFBBC05),
-    Color(0xFFEA4335),
-    Color(0xFF9C27B0),
-    Color(0xFF00BCD4),
-    Color(0xFFFF9800),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final members = trip.memberDetails.values.toList();
-    if (members.isEmpty) {
-      // memberDetailsがない場合はmembersの数だけ表示
-      return Text('${trip.members.length}人', style: AppTypography.caption);
-    }
-
-    const maxShow = 4;
-    final showMembers = members.take(maxShow).toList();
-    final extraCount = members.length - maxShow;
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: showMembers.length * 18.0 + 8 + (extraCount > 0 ? 18.0 : 0),
-          height: 26,
-          child: Stack(
-            children: [
-              for (var i = 0; i < showMembers.length; i++)
-                Positioned(
-                  left: i * 16.0,
-                  child: _TripAvatarCircle(
-                    name: showMembers[i].displayName,
-                    color: _avatarColors[i % _avatarColors.length],
-                  ),
-                ),
-              if (extraCount > 0)
-                Positioned(
-                  left: showMembers.length * 16.0,
-                  child: Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: AppColors.cardBackground,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.background, width: 2),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '+$extraCount',
-                        style: AppTypography.labelSmall.copyWith(
-                          color: AppColors.textSecondary,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// アバターサークル（ホーム画面トリップカード用）
-class _TripAvatarCircle extends StatelessWidget {
-  const _TripAvatarCircle({required this.name, required this.color});
-
-  final String name;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final initial = name.isNotEmpty ? name.characters.first : '?';
-    return Container(
-      width: 26,
-      height: 26,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppColors.background, width: 2),
-      ),
-      child: Center(
-        child: Text(
-          initial,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// ステータスバッジ
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.hasPlan});
-
-  final bool hasPlan;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = hasPlan ? 'しおり作成済み' : '準備中';
-    final color = hasPlan ? AppColors.subAccent : AppColors.textSecondary;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSizes.paddingS,
-        vertical: AppSizes.paddingXS,
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(AppSizes.radiusFull),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: AppTypography.labelSmall.copyWith(
-              color: color,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1607,298 +1545,66 @@ class _BannerAdWidgetState extends State<_BannerAdWidget> {
   }
 }
 
-/// 旅行作成シート
-class _CreateTripSheet extends ConsumerStatefulWidget {
-  const _CreateTripSheet();
+/// 作成方法カード（手動 / 画像読み取り）
+class _CreateMethodCard extends StatelessWidget {
+  const _CreateMethodCard({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
 
-  @override
-  ConsumerState<_CreateTripSheet> createState() => _CreateTripSheetState();
-}
-
-class _CreateTripSheetState extends ConsumerState<_CreateTripSheet> {
-  final _titleController = TextEditingController();
-  DateTimeRange? _dateRange;
-  bool _isDateUndecided = false;
-  bool _isLoading = false;
-  bool _showSuccess = false;
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    super.dispose();
-  }
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppSizes.radiusXL),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppSizes.radiusL),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSizes.paddingM,
+          vertical: AppSizes.paddingL,
         ),
-      ),
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: AppSizes.paddingL,
-          right: AppSizes.paddingL,
-          top: AppSizes.paddingM,
-          bottom: MediaQuery.of(context).viewInsets.bottom + AppSizes.paddingL,
+        decoration: BoxDecoration(
+          color: AppColors.cardBackground,
+          borderRadius: BorderRadius.circular(AppSizes.radiusL),
+          border: Border.all(color: AppColors.border),
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ハンドル
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSizes.paddingL),
-
-            // 成功表示
-            if (_showSuccess)
-              _buildSuccessState()
-            else
-              _buildContent(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
           children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
                 color: AppColors.accent.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.flight_takeoff_rounded,
-                color: AppColors.accent,
-                size: 22,
-              ),
+              child: Icon(icon, color: AppColors.accent, size: 24),
             ),
-            const SizedBox(width: AppSizes.paddingS),
-            Text(AppStrings.newTrip, style: AppTypography.headlineSmall),
+            const SizedBox(height: AppSizes.paddingS),
+            Text(
+              label,
+              style: AppTypography.labelMedium.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: AppTypography.caption.copyWith(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
-        const SizedBox(height: AppSizes.paddingXS),
-        Text(
-          '旅のしおりを作りましょう',
-          style: AppTypography.bodySmall.copyWith(
-            color: AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: AppSizes.paddingL),
-
-        TextField(
-          controller: _titleController,
-          decoration: InputDecoration(
-            labelText: AppStrings.tripTitle,
-            hintText: AppStrings.tripTitleHint,
-            prefixIcon: Icon(
-              Icons.edit_outlined,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _createTrip(),
-        ),
-        const SizedBox(height: AppSizes.paddingM),
-
-        InkWell(
-          onTap: () {
-            setState(() {
-              _isDateUndecided = !_isDateUndecided;
-              if (_isDateUndecided) _dateRange = null;
-            });
-          },
-          borderRadius: BorderRadius.circular(AppSizes.radiusM),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              vertical: AppSizes.paddingS,
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color:
-                        _isDateUndecided
-                            ? AppColors.accent
-                            : Colors.transparent,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color:
-                          _isDateUndecided
-                              ? AppColors.accent
-                              : AppColors.border,
-                      width: 2,
-                    ),
-                  ),
-                  child:
-                      _isDateUndecided
-                          ? const Icon(
-                            Icons.check_rounded,
-                            size: 16,
-                            color: Colors.white,
-                          )
-                          : null,
-                ),
-                const SizedBox(width: AppSizes.paddingM),
-                Text(
-                  AppStrings.tripDateUndecided,
-                  style: AppTypography.bodyMedium,
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        if (!_isDateUndecided) ...[
-          const SizedBox(height: AppSizes.paddingS),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final range = await showDateRangePicker(
-                context: context,
-                firstDate: DateTime.now(),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-                saveText: '決定',
-                initialEntryMode: DatePickerEntryMode.calendarOnly,
-              );
-              if (range != null) {
-                setState(() => _dateRange = range);
-              }
-            },
-            icon: const Icon(Icons.calendar_today_outlined),
-            label: Text(
-              _dateRange != null
-                  ? '${_dateRange!.start.month}/${_dateRange!.start.day} - ${_dateRange!.end.month}/${_dateRange!.end.day}'
-                  : '日程を選択',
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-            ),
-          ),
-        ],
-
-        const SizedBox(height: AppSizes.paddingL),
-
-        ElevatedButton(
-          onPressed: _isLoading ? null : () => _createTrip(),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.accent,
-            minimumSize: const Size.fromHeight(52),
-          ),
-          child:
-              _isLoading
-                  ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                  : Text(
-                    '旅を始める',
-                    style: AppTypography.button.copyWith(color: Colors.white),
-                  ),
-        ),
-        const SizedBox(height: AppSizes.paddingS),
-      ],
-    );
-  }
-
-  /// 成功表示
-  Widget _buildSuccessState() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSizes.paddingXL),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SuccessCheckAnimation(size: 64),
-          const SizedBox(height: AppSizes.paddingM),
-          Text(
-            '旅を作成しました!',
-            style: AppTypography.titleMedium,
-          ),
-        ],
       ),
     );
-  }
-
-  Future<void> _createTrip() async {
-    var title = _titleController.text.trim();
-    if (title.isEmpty) title = '新しい旅';
-
-    setState(() => _isLoading = true);
-
-    try {
-      final tripId = await ref
-          .read(tripControllerProvider.notifier)
-          .createTrip(
-            title: title,
-            startDate: _dateRange?.start,
-            endDate: _dateRange?.end,
-          );
-
-      if (mounted) {
-        if (tripId != null) {
-          setState(() => _showSuccess = true);
-          HapticFeedback.mediumImpact();
-          await Future.delayed(const Duration(milliseconds: 600));
-          if (mounted) {
-            Navigator.of(context).pop((
-              tripId: tripId,
-              title: title,
-              startDate: _dateRange?.start,
-              endDate: _dateRange?.end,
-            ));
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('旅行の作成に失敗しました'),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppSizes.radiusM),
-              ),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('エラー: $e'),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSizes.radiusM),
-            ),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
   }
 }

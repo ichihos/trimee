@@ -15,13 +15,11 @@ import '../../../../shared/services/ai_service.dart';
 import '../../../../shared/services/plan_export_service.dart';
 import '../../../../shared/utils/file_saver.dart' as file_saver;
 import '../../../../shared/providers/ad_provider.dart';
-import '../../../../shared/widgets/animated_widgets.dart';
 import '../../../../shared/widgets/app_icon.dart';
 import '../../../../shared/widgets/trip_image_picker.dart';
 import '../../../trip/presentation/providers/trip_provider.dart';
 import '../providers/plan_provider.dart';
 import 'plan_view_screen.dart';
-import 'travel_animation_screen.dart';
 
 /// しおり編集画面（共同編集対応）
 class PlanEditScreen extends ConsumerStatefulWidget {
@@ -32,6 +30,7 @@ class PlanEditScreen extends ConsumerStatefulWidget {
     this.tripTitle,
     this.startDate,
     this.endDate,
+    this.autoImportImage = false,
   });
 
   final String tripId;
@@ -39,6 +38,7 @@ class PlanEditScreen extends ConsumerStatefulWidget {
   final String? tripTitle;
   final DateTime? startDate;
   final DateTime? endDate;
+  final bool autoImportImage;
 
   @override
   ConsumerState<PlanEditScreen> createState() => _PlanEditScreenState();
@@ -64,8 +64,13 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
   // 画像インポート用
   bool _isAnalyzing = false;
 
-  // アイコン自動設定用
+  // アイコン・タイトル自動設定用
   bool _hasCheckedAutoIcon = false;
+  bool _hasAutoSetTitle = false;
+
+  // 日程（編集画面内で変更可能）
+  DateTime? _startDate;
+  DateTime? _endDate;
 
   @override
   void initState() {
@@ -73,11 +78,29 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     _titleController = TextEditingController(text: widget.plan.title);
     _items = _ensureItemIds(widget.plan.items);
     _lastSaveTime = widget.plan.updatedAt ?? widget.plan.createdAt;
+    _startDate = widget.startDate;
+    _endDate = widget.endDate;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setPresence(active: true);
       _listenToExternalChanges();
+      // tripから日程を読み込み（startDate/endDateがnullで渡された場合）
+      _loadTripDates();
+      if (widget.autoImportImage) {
+        _importFromImage();
+      }
     });
+  }
+
+  void _loadTripDates() {
+    if (_startDate != null) return;
+    final trip = ref.read(tripDetailProvider(widget.tripId)).valueOrNull;
+    if (trip != null && trip.startDate != null) {
+      setState(() {
+        _startDate = trip.startDate;
+        _endDate = trip.endDate;
+      });
+    }
   }
 
   @override
@@ -205,6 +228,14 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
         }
       }
 
+      // タイトル未入力時に内容から自動設定（場所名優先）
+      if (!_hasAutoSetTitle && _titleController.text.isEmpty && _items.isNotEmpty) {
+        _hasAutoSetTitle = true;
+        final autoTitle = TripIconAssets.fallbackTitleFromItems(_items);
+        _titleController.text = autoTitle;
+        _saveTitle();
+      }
+
       _lastSaveTime = DateTime.now();
       if (mounted) {
         setState(() {
@@ -220,14 +251,40 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
 
   void _saveTitle() {
     _ignoreStreamUntil = DateTime.now().add(const Duration(seconds: 3));
+    final title = _titleController.text;
     ref
         .read(planControllerProvider.notifier)
         .updatePlanTitle(
           tripId: widget.tripId,
           planId: widget.plan.id,
-          title: _titleController.text,
+          title: title,
         );
+    ref.read(tripRepositoryProvider).updateTripTitle(widget.tripId, title);
     _lastSaveTime = DateTime.now();
+  }
+
+  Future<void> _pickDateRange() async {
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+      initialDateRange: _startDate != null && _endDate != null
+          ? DateTimeRange(start: _startDate!, end: _endDate!)
+          : null,
+      saveText: '決定',
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+    );
+    if (range != null) {
+      setState(() {
+        _startDate = range.start;
+        _endDate = range.end;
+      });
+      await ref.read(tripRepositoryProvider).updateTripDates(
+        widget.tripId,
+        range.start,
+        range.end,
+      );
+    }
   }
 
   // --- 画像インポート ---
@@ -245,8 +302,8 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       final newItems = await ref.read(aiServiceProvider).analyzeImageForItinerary(
         imageBytes: bytes,
         mimeType: mimeType,
-        startDate: widget.startDate,
-        endDate: widget.endDate,
+        startDate: _startDate,
+        endDate: _endDate,
       );
 
       if (newItems.isNotEmpty && mounted) {
@@ -526,8 +583,8 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       final plan = widget.plan.copyWith(items: _items, title: _titleController.text);
       final bytes = await PlanExportService.exportPdfAsBytes(
         plan: plan,
-        tripTitle: widget.tripTitle ?? plan.title,
-        startDate: widget.startDate,
+        tripTitle: _titleController.text.isNotEmpty ? _titleController.text : (widget.tripTitle ?? plan.title),
+        startDate: _startDate,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -617,7 +674,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
     );
   }
 
-  void _showExportMenu() {
+  void _showShareMenu() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -655,21 +712,6 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                 onTap: () {
                   Navigator.pop(ctx);
                   _showAdThenExport(_exportAsPdf);
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.play_circle_outline, color: AppColors.accent),
-                title: const Text('アニメーションで見る'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => TravelAnimationScreen(
-                        items: _items,
-                        planTitle: _titleController.text,
-                      ),
-                    ),
-                  );
                 },
               ),
               const SizedBox(height: AppSizes.paddingM),
@@ -746,24 +788,72 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                   builder: (_) => PlanViewScreen(
                     tripId: widget.tripId,
                     plan: widget.plan.copyWith(items: _items, title: _titleController.text),
-                    startDate: widget.startDate,
-                    endDate: widget.endDate,
-                    tripTitle: widget.tripTitle,
+                    startDate: _startDate,
+                    endDate: _endDate,
+                    tripTitle: _titleController.text.isNotEmpty ? _titleController.text : widget.tripTitle,
                   ),
                 ),
               );
             },
           ),
-          // エクスポート
+          // 共有
           IconButton(
             icon: Icon(Icons.ios_share_outlined, color: AppColors.textSecondary),
-            tooltip: 'エクスポート',
-            onPressed: _showExportMenu,
+            tooltip: '共有',
+            onPressed: _showShareMenu,
           ),
         ],
       ),
       body: Column(
         children: [
+          // 日程チップ
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingM),
+            child: Row(
+              children: [
+                const SizedBox(width: 42),
+                GestureDetector(
+                  onTap: _pickDateRange,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _startDate != null
+                          ? AppColors.accent.withValues(alpha: 0.08)
+                          : AppColors.cardBackground,
+                      borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+                      border: Border.all(
+                        color: _startDate != null
+                            ? AppColors.accent.withValues(alpha: 0.3)
+                            : AppColors.border,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.calendar_today_outlined,
+                          size: 13,
+                          color: _startDate != null ? AppColors.accent : AppColors.textSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _startDate != null
+                              ? '${_startDate!.month}/${_startDate!.day} - ${_endDate!.month}/${_endDate!.day}'
+                              : '日程を設定',
+                          style: AppTypography.caption.copyWith(
+                            color: _startDate != null ? AppColors.accent : AppColors.textSecondary,
+                            fontWeight: _startDate != null ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+
           // 共同編集バナー
           if (_otherEditorName != null)
             Container(
@@ -782,39 +872,15 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
               ),
             ),
 
-          // 画像解析中 — スケルトンカードで体感待ち時間を短縮
-          if (_isAnalyzing)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(AppSizes.paddingM, AppSizes.paddingS, AppSizes.paddingM, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4, bottom: AppSizes.paddingS),
-                    child: Text('画像を解析中...', style: AppTypography.caption.copyWith(color: AppColors.textSecondary)),
-                  ),
-                  for (var i = 0; i < 3; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: AppSizes.paddingS),
-                      child: Row(
-                        children: [
-                          ShimmerLoading(width: 50, height: 14, borderRadius: 4),
-                          const SizedBox(width: 28),
-                          Expanded(child: ShimmerLoading(width: double.infinity, height: 52, borderRadius: AppSizes.radiusM)),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
           // メインコンテンツ
           Expanded(
             child: RepaintBoundary(
               key: _exportKey,
-              child: _items.isEmpty
-                  ? _buildEmptyState()
-                  : ReorderableListView.builder(
+              child: _isAnalyzing && _items.isEmpty
+                  ? _buildAnalyzingState()
+                  : _items.isEmpty
+                      ? _buildEmptyState()
+                      : ReorderableListView.builder(
                       scrollController: _scrollController,
                       padding: const EdgeInsets.all(AppSizes.paddingM),
                       itemCount: _items.length + sortedDays.length,
@@ -850,7 +916,7 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                             // Day header（並べ替え不可）
                             return IgnorePointer(
                               key: ValueKey('day_header_$day'),
-                              child: _DayHeader(day: day, startDate: widget.startDate),
+                              child: _DayHeader(day: day, startDate: _startDate),
                             );
                           }
                           headerCount++;
@@ -896,6 +962,38 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
       headerCount += items.length;
     }
     return null;
+  }
+
+  Widget _buildAnalyzingState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 80,
+            height: 80,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              valueColor: AlwaysStoppedAnimation<Color>(AppColors.accent),
+            ),
+          ),
+          const SizedBox(height: 32),
+          Text(
+            '画像を解析中...',
+            style: AppTypography.titleMedium.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '旅程を読み取っています',
+            style: AppTypography.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmptyState() {

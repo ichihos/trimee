@@ -30,6 +30,9 @@ mixin _$PlanItem {
   double? get latitude => throw _privateConstructorUsedError;
   double? get longitude => throw _privateConstructorUsedError;
 
+  /// 位置の精度半径（メートル）— AIジオコーディングの確信度
+  double? get locationRadius => throw _privateConstructorUsedError;
+
   /// 予約URL
   String? get bookingUrl => throw _privateConstructorUsedError;
 
@@ -66,6 +69,7 @@ abstract class $PlanItemCopyWith<$Res> {
     int durationMinutes,
     double? latitude,
     double? longitude,
+    double? locationRadius,
     String? bookingUrl,
     String? bookingNote,
     bool isBooked,
@@ -96,6 +100,7 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
     Object? durationMinutes = null,
     Object? latitude = freezed,
     Object? longitude = freezed,
+    Object? locationRadius = freezed,
     Object? bookingUrl = freezed,
     Object? bookingNote = freezed,
     Object? isBooked = null,
@@ -143,6 +148,11 @@ class _$PlanItemCopyWithImpl<$Res, $Val extends PlanItem>
                     ? _value.longitude
                     : longitude // ignore: cast_nullable_to_non_nullable
                         as double?,
+            locationRadius:
+                freezed == locationRadius
+                    ? _value.locationRadius
+                    : locationRadius // ignore: cast_nullable_to_non_nullable
+                        as double?,
             bookingUrl:
                 freezed == bookingUrl
                     ? _value.bookingUrl
@@ -187,6 +197,7 @@ abstract class _$$PlanItemImplCopyWith<$Res>
     int durationMinutes,
     double? latitude,
     double? longitude,
+    double? locationRadius,
     String? bookingUrl,
     String? bookingNote,
     bool isBooked,
@@ -216,6 +227,7 @@ class __$$PlanItemImplCopyWithImpl<$Res>
     Object? durationMinutes = null,
     Object? latitude = freezed,
     Object? longitude = freezed,
+    Object? locationRadius = freezed,
     Object? bookingUrl = freezed,
     Object? bookingNote = freezed,
     Object? isBooked = null,
@@ -263,6 +275,11 @@ class __$$PlanItemImplCopyWithImpl<$Res>
                 ? _value.longitude
                 : longitude // ignore: cast_nullable_to_non_nullable
                     as double?,
+        locationRadius:
+            freezed == locationRadius
+                ? _value.locationRadius
+                : locationRadius // ignore: cast_nullable_to_non_nullable
+                    as double?,
         bookingUrl:
             freezed == bookingUrl
                 ? _value.bookingUrl
@@ -300,6 +317,7 @@ class _$PlanItemImpl implements _PlanItem {
     this.durationMinutes = 60,
     this.latitude,
     this.longitude,
+    this.locationRadius,
     this.bookingUrl,
     this.bookingNote,
     this.isBooked = false,
@@ -329,6 +347,10 @@ class _$PlanItemImpl implements _PlanItem {
   @override
   final double? longitude;
 
+  /// 位置の精度半径（メートル）— AIジオコーディングの確信度
+  @override
+  final double? locationRadius;
+
   /// 予約URL
   @override
   final String? bookingUrl;
@@ -348,7 +370,7 @@ class _$PlanItemImpl implements _PlanItem {
 
   @override
   String toString() {
-    return 'PlanItem(id: $id, day: $day, time: $time, location: $location, notes: $notes, durationMinutes: $durationMinutes, latitude: $latitude, longitude: $longitude, bookingUrl: $bookingUrl, bookingNote: $bookingNote, isBooked: $isBooked, bookingImageUrl: $bookingImageUrl)';
+    return 'PlanItem(id: $id, day: $day, time: $time, location: $location, notes: $notes, durationMinutes: $durationMinutes, latitude: $latitude, longitude: $longitude, locationRadius: $locationRadius, bookingUrl: $bookingUrl, bookingNote: $bookingNote, isBooked: $isBooked, bookingImageUrl: $bookingImageUrl)';
   }
 
   @override
@@ -368,6 +390,8 @@ class _$PlanItemImpl implements _PlanItem {
                 other.latitude == latitude) &&
             (identical(other.longitude, longitude) ||
                 other.longitude == longitude) &&
+            (identical(other.locationRadius, locationRadius) ||
+                other.locationRadius == locationRadius) &&
             (identical(other.bookingUrl, bookingUrl) ||
                 other.bookingUrl == bookingUrl) &&
             (identical(other.bookingNote, bookingNote) ||
@@ -390,6 +414,7 @@ class _$PlanItemImpl implements _PlanItem {
     durationMinutes,
     latitude,
     longitude,
+    locationRadius,
     bookingUrl,
     bookingNote,
     isBooked,
@@ -420,6 +445,7 @@ abstract class _PlanItem implements PlanItem {
     final int durationMinutes,
     final double? latitude,
     final double? longitude,
+    final double? locationRadius,
     final String? bookingUrl,
     final String? bookingNote,
     final bool isBooked,
@@ -445,6 +471,10 @@ abstract class _PlanItem implements PlanItem {
   double? get latitude;
   @override
   double? get longitude;
+
+  /// 位置の精度半径（メートル）— AIジオコーディングの確信度
+  @override
+  double? get locationRadius;
 
   /// 予約URL
   @override

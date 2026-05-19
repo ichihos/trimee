@@ -13,13 +13,22 @@ import 'package:trimee/core/constants/app_sizes.dart';
 import 'package:trimee/core/constants/app_typography.dart';
 import 'package:trimee/core/constants/mapbox_config.dart';
 import 'package:trimee/shared/models/plan_model.dart';
-// video_export_service and ad_provider removed - video export disabled
+import 'package:trimee/shared/services/ai_service.dart';
+import 'package:trimee/features/plan/presentation/providers/plan_provider.dart';
 
 class TravelAnimationScreen extends ConsumerStatefulWidget {
-  const TravelAnimationScreen({required this.items, this.planTitle, super.key});
+  const TravelAnimationScreen({
+    required this.items,
+    this.planTitle,
+    this.tripId,
+    this.planId,
+    super.key,
+  });
 
   final List<PlanItem> items;
   final String? planTitle;
+  final String? tripId;
+  final String? planId;
 
   @override
   ConsumerState<TravelAnimationScreen> createState() =>
@@ -60,8 +69,9 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   // 旅のサマリー（アウトロ用）
   double _totalDistanceKm = 0;
 
-  bool _isRecording = false;
-  bool _isExportAvailable = false;
+  // ジオコーディング
+  bool _isGeocoding = false;
+  late List<PlanItem> _geocodedItems;
 
   late AnimationController _introController;
   late AnimationController _cardController;
@@ -69,13 +79,15 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
   late AnimationController _transitController;
 
   List<PlanItem> get _validItems =>
-      widget.items
+      _geocodedItems
           .where((i) => i.latitude != null && i.longitude != null)
           .toList();
 
   @override
   void initState() {
     super.initState();
+    _geocodedItems = List.from(widget.items);
+
     if (!kIsWeb) {
       MapboxOptions.setAccessToken(MapboxConfig.accessToken);
     }
@@ -100,25 +112,59 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     // イントロアニメーション
     _introController.forward();
 
-    // エクスポート機能の利用可否チェック
-    _checkExportAvailability();
+    // 座標未設定のアイテムがあればジオコーディング
+    _geocodeIfNeeded();
   }
 
-  Future<void> _checkExportAvailability() async {
-    // Video export disabled
-    if (mounted) {
-      setState(() => _isExportAvailable = false);
+  Future<void> _geocodeIfNeeded() async {
+    final needsGeocode = _geocodedItems.any(
+      (i) => i.location.isNotEmpty && i.latitude == null,
+    );
+    if (!needsGeocode) return;
+
+    setState(() => _isGeocoding = true);
+
+    try {
+      final result = await ref.read(aiServiceProvider).geocodeItems(
+        items: _geocodedItems,
+        tripTitle: widget.planTitle,
+      );
+
+      if (mounted) {
+        setState(() {
+          _geocodedItems = result;
+          _isGeocoding = false;
+        });
+
+        // Firestoreに保存（次回以降はキャッシュ）
+        _saveGeocodedItems(result);
+
+        // 地図にルートを再描画
+        if (_mapboxMap != null) {
+          _drawRoute();
+          _fitToBounds();
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Geocode error: $e');
+      if (mounted) setState(() => _isGeocoding = false);
     }
   }
 
-  Future<void> _startExport() async {
-    HapticFeedback.mediumImpact();
-    // Video export disabled
-  }
+  Future<void> _saveGeocodedItems(List<PlanItem> items) async {
+    final tripId = widget.tripId;
+    final planId = widget.planId;
+    if (tripId == null || planId == null) return;
 
-  Future<void> _stopExportAndSave() async {
-    // Video export disabled
-    setState(() => _isRecording = false);
+    try {
+      await ref.read(planControllerProvider.notifier).updatePlanItems(
+        tripId: tripId,
+        planId: planId,
+        items: items,
+      );
+    } catch (e) {
+      debugPrint('❌ Failed to save geocoded items: $e');
+    }
   }
 
   @override
@@ -265,6 +311,14 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
       );
     }
 
+    // 同一座標のスポットをグループ化（番号ラベルをまとめる）
+    final locationGroups = <String, List<int>>{};
+    for (var i = 0; i < _validItems.length; i++) {
+      final item = _validItems[i];
+      final key = '${item.latitude!.toStringAsFixed(5)},${item.longitude!.toStringAsFixed(5)}';
+      locationGroups.putIfAbsent(key, () => []).add(i);
+    }
+
     // スポットマーカー（CircleAnnotation）
     final circleManager =
         await _mapboxMap!.annotations.createCircleAnnotationManager();
@@ -273,14 +327,15 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
     final pointManager =
         await _mapboxMap!.annotations.createPointAnnotationManager();
 
-    for (var i = 0; i < _validItems.length; i++) {
-      final item = _validItems[i];
+    for (final entry in locationGroups.entries) {
+      final indices = entry.value;
+      final item = _validItems[indices.first];
+      final coords = Position(item.longitude!, item.latitude!);
+
       // 外側のリング
       await circleManager.create(
         CircleAnnotationOptions(
-          geometry: Point(
-            coordinates: Position(item.longitude!, item.latitude!),
-          ),
+          geometry: Point(coordinates: coords),
           circleRadius: 11.0,
           circleColor: Colors.white.toARGB32(),
           circleOpacity: 0.95,
@@ -291,28 +346,24 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
       // 内側の塗り
       await circleManager.create(
         CircleAnnotationOptions(
-          geometry: Point(
-            coordinates: Position(item.longitude!, item.latitude!),
-          ),
+          geometry: Point(coordinates: coords),
           circleRadius: 6.0,
           circleColor: AppColors.accent.toARGB32(),
           circleOpacity: 1.0,
         ),
       );
-      // 番号ラベル
+      // 番号ラベル（同一地点は "3・7" のようにまとめる）
+      final label = indices.map((i) => '${i + 1}').join('・');
       await pointManager.create(
         PointAnnotationOptions(
-          geometry: Point(
-            coordinates: Position(item.longitude!, item.latitude!),
-          ),
-          textField: '${i + 1}',
+          geometry: Point(coordinates: coords),
+          textField: label,
           textSize: 11.0,
           textColor: Colors.white.toARGB32(),
           textHaloColor: AppColors.accent.toARGB32(),
           textHaloWidth: 1.5,
           textOffset: [0.0, -2.2],
         ),
-
       );
     }
 
@@ -424,16 +475,9 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
       _outroController.forward(from: 0);
       HapticFeedback.mediumImpact();
 
-      if (_isRecording) {
-        Future.delayed(const Duration(seconds: 1), () async {
-          if (mounted) await _stopExportAndSave();
-          if (mounted) _fitToBounds();
-        });
-      } else {
-        Future.delayed(const Duration(seconds: 2), () {
-          if (mounted) _fitToBounds();
-        });
-      }
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _fitToBounds();
+      });
       return;
     }
 
@@ -679,42 +723,6 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
             ),
           ),
 
-          // 録画中インジケーター
-          if (_isRecording)
-            Positioned(
-              top: topPadding + 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.fiber_manual_record,
-                      color: Colors.white,
-                      size: 10,
-                    ),
-                    SizedBox(width: 4),
-                    Text(
-                      'REC',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
           // プログレスドット（再生中に表示）
           if ((_isPlaying || !_showIntro) && !_showOutro)
             Positioned(
@@ -739,7 +747,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
                       ? 0
                       : _validItems.map((i) => i.day).toSet().length,
               onPlay: _play,
-              onExport: _isExportAvailable ? _startExport : null,
+              isGeocoding: _isGeocoding,
             ),
 
           // トランジット情報ピル（スポット間移動中 - 上部に小さく表示）
@@ -807,6 +815,7 @@ class _TravelAnimationScreenState extends ConsumerState<TravelAnimationScreen>
                 });
                 _play();
               },
+              onShare: () => Navigator.pop(context, 'share'),
               onClose: () => Navigator.pop(context),
             ),
 
@@ -915,7 +924,7 @@ class _IntroOverlay extends StatelessWidget {
     required this.spotCount,
     required this.dayCount,
     required this.onPlay,
-    this.onExport,
+    this.isGeocoding = false,
   });
 
   final AnimationController controller;
@@ -923,10 +932,76 @@ class _IntroOverlay extends StatelessWidget {
   final int spotCount;
   final int dayCount;
   final VoidCallback onPlay;
-  final VoidCallback? onExport;
+  final bool isGeocoding;
 
   @override
   Widget build(BuildContext context) {
+    if (isGeocoding) return _buildPreparingView();
+    return _buildReadyView();
+  }
+
+  Widget _buildPreparingView() {
+    final fadeIn = CurvedAnimation(
+      parent: controller,
+      curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
+    );
+
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black,
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: fadeIn,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 64,
+                  height: 64,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: AppColors.accent,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                Text(
+                  'アニメーションを準備しています',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '位置情報を解析中...',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5),
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 40),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 48),
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.3),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReadyView() {
     final fadeIn = CurvedAnimation(
       parent: controller,
       curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
@@ -1041,65 +1116,22 @@ class _IntroOverlay extends StatelessWidget {
 
               const Spacer(flex: 1),
 
-              // 再生ボタン（パルスグロー付き）
+              // 再生ボタン
               FadeTransition(
                 opacity: buttonFade,
-                child: _PulsePlayButton(onTap: onPlay),
-              ),
-
-              const SizedBox(height: 12),
-              FadeTransition(
-                opacity: buttonFade,
-                child: Text(
-                  'タップして再生',
-                  style: AppTypography.caption.copyWith(
-                    color: Colors.white.withValues(alpha: 0.6),
-                  ),
-                ),
-              ),
-
-              if (onExport != null) ...[
-                const SizedBox(height: 20),
-                FadeTransition(
-                  opacity: buttonFade,
-                  child: GestureDetector(
-                    onTap: onExport,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.3),
-                        ),
-                        borderRadius: BorderRadius.circular(
-                          AppSizes.radiusFull,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.videocam_rounded,
-                            color: Colors.white.withValues(alpha: 0.8),
-                            size: 18,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            '動画として保存',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.8),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
+                child: Column(
+                  children: [
+                    _PulsePlayButton(onTap: onPlay),
+                    const SizedBox(height: 12),
+                    Text(
+                      'タップして再生',
+                      style: AppTypography.caption.copyWith(
+                        color: Colors.white.withValues(alpha: 0.6),
                       ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
 
               const SizedBox(height: 48),
             ],
@@ -1437,6 +1469,7 @@ class _OutroOverlay extends StatelessWidget {
     required this.dayCount,
     required this.totalDistanceKm,
     required this.onReplay,
+    required this.onShare,
     required this.onClose,
   });
 
@@ -1446,6 +1479,7 @@ class _OutroOverlay extends StatelessWidget {
   final int dayCount;
   final double totalDistanceKm;
   final VoidCallback onReplay;
+  final VoidCallback onShare;
   final VoidCallback onClose;
 
   @override
@@ -1577,9 +1611,9 @@ class _OutroOverlay extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // 閉じる
+                    // 共有
                     GestureDetector(
-                      onTap: onClose,
+                      onTap: onShare,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 20,
@@ -1605,14 +1639,42 @@ class _OutroOverlay extends StatelessWidget {
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            Icon(Icons.ios_share, color: Colors.white, size: 18),
+                            SizedBox(width: 6),
                             Text(
-                              '閉じる',
+                              'しおりを共有',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // 閉じる
+                    GestureDetector(
+                      onTap: onClose,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.3),
+                          ),
+                          borderRadius: BorderRadius.circular(
+                            AppSizes.radiusFull,
+                          ),
+                        ),
+                        child: Text(
+                          '閉じる',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.8),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
@@ -2469,10 +2531,19 @@ List<_AreaSpecialty> _getAreaSpecialties(String location) {
 
 /// 距離に応じたスポット到着時カメラ設定（地域が見える程度に引く）
 ({double zoom, double pitch}) _cameraForArrival(PlanItem? from, PlanItem to) {
-  if (from == null) return (zoom: 12.0, pitch: 30.0);
+  // locationRadiusが大きい（曖昧な場所）場合はズームアウトして範囲表示
+  final radius = to.locationRadius;
+  if (radius != null && radius > 500) {
+    if (radius > 10000) return (zoom: 9.0, pitch: 10.0);
+    if (radius > 5000) return (zoom: 10.5, pitch: 15.0);
+    if (radius > 2000) return (zoom: 11.5, pitch: 20.0);
+    return (zoom: 12.5, pitch: 25.0);
+  }
+
+  if (from == null) return (zoom: 14.0, pitch: 30.0);
   final dist = _haversineDistance(from, to);
-  if (dist < 1.0) return (zoom: 14.0, pitch: 35.0);
-  if (dist < 15.0) return (zoom: 12.5, pitch: 30.0);
+  if (dist < 1.0) return (zoom: 15.0, pitch: 35.0);
+  if (dist < 15.0) return (zoom: 13.0, pitch: 30.0);
   if (dist < 100.0) return (zoom: 11.0, pitch: 25.0);
   return (zoom: 9.0, pitch: 15.0);
 }

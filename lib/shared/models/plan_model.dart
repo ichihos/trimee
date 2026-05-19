@@ -17,6 +17,9 @@ class PlanItem with _$PlanItem {
     double? latitude,
     double? longitude,
 
+    /// 位置の精度半径（メートル）— AIジオコーディングの確信度
+    double? locationRadius,
+
     /// 予約URL
     String? bookingUrl,
 

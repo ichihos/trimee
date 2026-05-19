@@ -107,4 +107,82 @@ JSON形式:
       return [];
     }
   }
+
+  /// しおりアイテムの位置情報をAIで一括推定
+  /// 場所名・メモ・旅行全体のコンテキストから座標と精度半径を返す
+  Future<List<PlanItem>> geocodeItems({
+    required List<PlanItem> items,
+    String? tripTitle,
+  }) async {
+    if (items.isEmpty) return items;
+
+    final itemsJson = items.asMap().entries.map((e) => {
+      'index': e.key,
+      'location': e.value.location,
+      'notes': e.value.notes ?? '',
+      'day': e.value.day,
+    }).toList();
+
+    final prompt = '''
+あなたは旅行プランの場所名から緯度経度を推定するジオコーダーです。
+${tripTitle != null && tripTitle.isNotEmpty ? '旅行タイトル: $tripTitle' : ''}
+
+以下の旅程アイテムそれぞれに対して、最も妥当な緯度・経度・位置精度半径(メートル)を推定してください。
+
+旅程:
+${jsonEncode(itemsJson)}
+
+推定ルール:
+- 具体的な施設名・ランドマーク → 正確な座標、radiusは100以下
+- 駅名・エリア名 → そのエリアの中心、radiusは500〜2000
+- 「ランチ」「ホテル」など曖昧な行程 → 前後の行程や旅行タイトルから推定し、radiusは2000〜10000
+- 推定不能な場合でも旅行全体のコンテキストからベストエフォートで推定してください
+- radiusは位置の不確実さを表します（小さいほど確信度が高い）
+
+JSON形式で返してください（JSON以外のテキストは出力しないでください）:
+{
+  "locations": [
+    {"index": 0, "latitude": 35.6586, "longitude": 139.7454, "radius": 50},
+    {"index": 1, "latitude": 35.6762, "longitude": 139.6503, "radius": 3000}
+  ]
+}
+''';
+
+    try {
+      final response = await _flashModel.generateContent([
+        Content.text(prompt),
+      ]);
+
+      _logTokenUsage('geocodeItems', 'flash', response);
+
+      final text = response.text ?? '';
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
+      if (jsonMatch == null) return items;
+
+      final json = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
+      final locations = json['locations'] as List<dynamic>? ?? [];
+
+      final result = List<PlanItem>.from(items);
+      for (final loc in locations) {
+        final map = loc as Map<String, dynamic>;
+        final index = map['index'] as int?;
+        if (index == null || index < 0 || index >= result.length) continue;
+
+        final lat = (map['latitude'] as num?)?.toDouble();
+        final lng = (map['longitude'] as num?)?.toDouble();
+        final radius = (map['radius'] as num?)?.toDouble();
+        if (lat == null || lng == null) continue;
+
+        result[index] = result[index].copyWith(
+          latitude: lat,
+          longitude: lng,
+          locationRadius: radius ?? 1000,
+        );
+      }
+      return result;
+    } catch (e) {
+      debugPrint('❌ Geocoding failed: $e');
+      return items;
+    }
+  }
 }

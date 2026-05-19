@@ -253,7 +253,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     }
   }
 
-  void _showExportMenu() {
+  void _showShareMenu() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -284,21 +284,6 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                 title: const Text('PDFで保存'),
                 onTap: () { Navigator.pop(ctx); _showAdThenExport(_exportAsPdf); },
               ),
-              ListTile(
-                leading: Icon(Icons.play_circle_outline, color: AppColors.accent),
-                title: const Text('アニメーションで見る'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => TravelAnimationScreen(
-                        items: widget.plan.items,
-                        planTitle: widget.plan.title,
-                      ),
-                    ),
-                  );
-                },
-              ),
               const SizedBox(height: AppSizes.paddingM),
             ],
           ),
@@ -307,12 +292,90 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     );
   }
 
+  Future<void> _openAnimation() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => TravelAnimationScreen(
+          items: widget.plan.items,
+          planTitle: widget.plan.title,
+          tripId: widget.tripId,
+          planId: widget.plan.id,
+        ),
+      ),
+    );
+    if (result == 'share' && mounted) {
+      _showShareMenu();
+    }
+  }
+
   /// Dayから日付文字列を生成
   String _dayDateLabel(int day) {
     if (widget.startDate == null) return 'Day $day';
     final date = widget.startDate!.add(Duration(days: day - 1));
     const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
     return 'Day $day  ${date.month}/${date.day}（${weekdays[date.weekday - 1]}）';
+  }
+
+  Widget _buildPlanHeader(List<PlanItem> items, List<int> sortedDays) {
+    final title = (widget.tripTitle?.isNotEmpty == true ? widget.tripTitle : null)
+        ?? (widget.plan.title.isNotEmpty ? widget.plan.title : '旅のしおり');
+    final dateLabel = _headerDateLabel();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSizes.paddingS, 0, AppSizes.paddingS, AppSizes.paddingM,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: AppTypography.headlineMedium,
+          ),
+          if (dateLabel != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.calendar_today_rounded, size: 14, color: AppColors.textSecondary),
+                const SizedBox(width: 6),
+                Text(
+                  dateLabel,
+                  style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _HeaderChip(
+                icon: Icons.place_rounded,
+                label: '${items.length}スポット',
+              ),
+              const SizedBox(width: 8),
+              _HeaderChip(
+                icon: Icons.today_rounded,
+                label: '${sortedDays.length}日間',
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+
+  String? _headerDateLabel() {
+    if (widget.startDate == null) return null;
+    final s = widget.startDate!;
+    const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
+    final start = '${s.month}/${s.day}（${weekdays[s.weekday - 1]}）';
+    if (widget.endDate != null) {
+      final e = widget.endDate!;
+      final end = '${e.month}/${e.day}（${weekdays[e.weekday - 1]}）';
+      return '$start - $end';
+    }
+    return '$start〜';
   }
 
   void _openEditScreen() {
@@ -343,18 +406,11 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.background,
         surfaceTintColor: Colors.transparent,
-        title: Text(
-          widget.plan.title,
-          style: AppTypography.titleMedium,
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
-        ),
-        titleSpacing: 0,
         actions: [
-          // エクスポート
           IconButton(
-            icon: Icon(Icons.ios_share_outlined, color: AppColors.textSecondary),
-            onPressed: _showExportMenu,
+            icon: Icon(Icons.edit_outlined, color: AppColors.textSecondary),
+            tooltip: '編集',
+            onPressed: _openEditScreen,
           ),
         ],
       ),
@@ -389,6 +445,7 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      _buildPlanHeader(items, sortedDays),
                       for (final day in sortedDays) ...[
                         _ShioriDayHeader(
                           label: _dayDateLabel(day),
@@ -406,13 +463,89 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
                 ),
               ),
             ),
-      floatingActionButton: items.isNotEmpty
-          ? FloatingActionButton(
-              onPressed: _openEditScreen,
-              backgroundColor: AppColors.accent,
-              child: const Icon(Icons.edit_outlined, color: Colors.white),
+      bottomNavigationBar: items.isNotEmpty
+          ? Container(
+              padding: EdgeInsets.only(
+                left: AppSizes.paddingL,
+                right: AppSizes.paddingL,
+                top: AppSizes.paddingM,
+                bottom: MediaQuery.of(context).padding.bottom + AppSizes.paddingM,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _openAnimation,
+                      icon: const Icon(Icons.play_circle_outline, size: 20),
+                      label: const Text('旅の軌跡'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.accent,
+                        side: BorderSide(color: AppColors.accent.withValues(alpha: 0.5)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSizes.paddingM),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _showShareMenu,
+                      icon: const Icon(Icons.ios_share, size: 20),
+                      label: const Text('共有する'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppSizes.radiusM),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             )
           : null,
+    );
+  }
+}
+
+/// ヘッダー統計チップ
+class _HeaderChip extends StatelessWidget {
+  const _HeaderChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppSizes.radiusFull),
+        border: Border.all(color: AppColors.accent.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppColors.accent),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: AppTypography.labelSmall.copyWith(
+              color: AppColors.accent,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

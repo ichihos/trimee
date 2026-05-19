@@ -256,6 +256,22 @@ class TripIconAssets {
     return 'travel';
   }
 
+  static const displayNames = {
+    'beach': 'ビーチ旅',
+    'camp': 'キャンプ旅',
+    'city': '都会旅',
+    'festival': 'お祭り旅',
+    'food': 'グルメ旅',
+    'hotspring': '温泉旅',
+    'mountain': '山旅',
+    'shrine': '寺社巡り',
+    'ski': 'スキー旅',
+    'travel': '旅のしおり',
+  };
+
+  static String displayName(String iconName) =>
+      displayNames[iconName] ?? '旅のしおり';
+
   /// tripId からの決定論的ランダム選択（未設定時に毎回同じアイコンになるように）
   static String fromTripId(String tripId) {
     final hash = tripId.hashCode.abs();
@@ -273,6 +289,70 @@ class TripIconAssets {
     'festival':  ['祭', 'フェス', '花火', 'イベント', 'ライブ'],
     'food':      ['グルメ', '食べ歩き', 'ラーメン', 'カフェ', 'ワイン', 'ワイナリー', '居酒屋', '寿司', '焼肉', '市場', 'レストラン', '食'],
   };
+
+  static const _placeNames = {
+    '京都': ['京都', '嵐山', '祇園', '清水寺', '伏見稲荷', '金閣寺'],
+    '沖縄': ['沖縄', '那覇', '石垣', '宮古島', '美ら海'],
+    '東京': ['東京', '渋谷', '新宿', '浅草', '銀座', '秋葉原', '原宿', '六本木', 'スカイツリー'],
+    '大阪': ['大阪', '道頓堀', '心斎橋', '新世界', '梅田', 'USJ', 'ユニバ'],
+    '北海道': ['北海道', '札幌', '小樽', '函館', '旭川', '富良野', 'ニセコ'],
+    '福岡': ['福岡', '博多', '天神', '太宰府'],
+    '広島': ['広島', '宮島', '尾道'],
+    '鹿児島': ['鹿児島', '桜島', '屋久島', '指宿'],
+    '名古屋': ['名古屋', '栄', '大須'],
+    '神戸': ['神戸', '三宮', '元町', '有馬温泉'],
+    '金沢': ['金沢', '兼六園', '近江町'],
+    '奈良': ['奈良', '東大寺', '奈良公園'],
+    '仙台': ['仙台', '松島'],
+    '長崎': ['長崎', 'ハウステンボス'],
+    '熊本': ['熊本', '阿蘇'],
+    '横浜': ['横浜', 'みなとみらい'],
+    '箱根': ['箱根'],
+    '鎌倉': ['鎌倉', '江ノ島'],
+    '日光': ['日光'],
+    '軽井沢': ['軽井沢'],
+    '伊豆': ['伊豆', '熱海', '下田'],
+    '富士山': ['富士山', '河口湖', '富士五湖'],
+    '高知': ['高知', '四万十'],
+    '青森': ['青森', '弘前', '十和田'],
+    '新潟': ['新潟', '佐渡', '越後湯沢'],
+    '石垣島': ['石垣島', '竹富島', '西表島'],
+    '宮古島': ['宮古島', '伊良部島'],
+  };
+
+  /// プランのアイテム内容から場所ベースのタイトルを生成
+  /// 「京都旅行」など場所優先、見つからなければアイコンベースの表示名
+  static String fallbackTitleFromItems(List<dynamic> items) {
+    final buf = StringBuffer();
+    for (final item in items) {
+      buf.write(item.location);
+      buf.write(' ');
+      if (item.notes != null) {
+        buf.write(item.notes);
+        buf.write(' ');
+      }
+    }
+    final text = buf.toString();
+
+    final scores = <String, int>{};
+    for (final entry in _placeNames.entries) {
+      var score = 0;
+      for (final kw in entry.value) {
+        if (text.contains(kw)) score++;
+      }
+      if (score > 0) scores[entry.key] = score;
+    }
+
+    if (scores.isNotEmpty) {
+      final topPlace = scores.entries.reduce(
+        (a, b) => a.value >= b.value ? a : b,
+      ).key;
+      return '$topPlace旅行';
+    }
+
+    final iconName = fromPlanItems(items);
+    return displayName(iconName);
+  }
 
   /// プランのアイテム内容からアイコンを推定（スコアリング）
   static String fromPlanItems(List<dynamic> items) {

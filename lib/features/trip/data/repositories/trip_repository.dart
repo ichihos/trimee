@@ -111,6 +111,27 @@ class TripRepository {
     });
   }
 
+  /// タイトルを更新
+  Future<void> updateTripTitle(String tripId, String title) async {
+    await _tripsCollection.doc(tripId).update({
+      'title': title,
+      'updatedAt': Timestamp.now(),
+    });
+  }
+
+  /// 日程を更新
+  Future<void> updateTripDates(
+    String tripId,
+    DateTime? startDate,
+    DateTime? endDate,
+  ) async {
+    await _tripsCollection.doc(tripId).update({
+      'startDate': startDate != null ? Timestamp.fromDate(startDate) : null,
+      'endDate': endDate != null ? Timestamp.fromDate(endDate) : null,
+      'updatedAt': Timestamp.now(),
+    });
+  }
+
   /// カバー画像URLを更新
   Future<void> updateTripImageUrl(String tripId, String? imageUrl) async {
     await _tripsCollection.doc(tripId).update({
