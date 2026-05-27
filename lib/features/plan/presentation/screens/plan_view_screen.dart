@@ -11,6 +11,8 @@ import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../shared/models/plan_model.dart';
 import '../../../../shared/services/plan_export_service.dart';
+import '../../../../shared/widgets/app_icon.dart';
+import '../../../trip/presentation/providers/trip_provider.dart';
 import 'plan_edit_screen.dart';
 import 'travel_animation_screen.dart';
 
@@ -320,49 +322,76 @@ class _PlanViewScreenState extends ConsumerState<PlanViewScreen> {
     final title = (widget.tripTitle?.isNotEmpty == true ? widget.tripTitle : null)
         ?? (widget.plan.title.isNotEmpty ? widget.plan.title : '旅のしおり');
     final dateLabel = _headerDateLabel();
+    final trip = ref.watch(tripDetailProvider(widget.tripId)).valueOrNull;
+    final iconName = _resolveIconName(trip?.imageUrl, title);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSizes.paddingS, 0, AppSizes.paddingS, AppSizes.paddingM,
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: AppTypography.headlineMedium,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.asset(
+              TripIconAssets.path(iconName),
+              width: 72,
+              height: 72,
+              fit: BoxFit.cover,
+            ),
           ),
-          if (dateLabel != null) ...[
-            const SizedBox(height: 6),
-            Row(
+          const SizedBox(width: AppSizes.paddingM),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.calendar_today_rounded, size: 14, color: AppColors.textSecondary),
-                const SizedBox(width: 6),
                 Text(
-                  dateLabel,
-                  style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+                  title,
+                  style: AppTypography.headlineSmall,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (dateLabel != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_today_rounded, size: 13, color: AppColors.textSecondary),
+                      const SizedBox(width: 5),
+                      Text(
+                        dateLabel,
+                        style: AppTypography.caption,
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _HeaderChip(
+                      icon: Icons.place_rounded,
+                      label: '${items.length}スポット',
+                    ),
+                    const SizedBox(width: 8),
+                    _HeaderChip(
+                      icon: Icons.today_rounded,
+                      label: '${sortedDays.length}日間',
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _HeaderChip(
-                icon: Icons.place_rounded,
-                label: '${items.length}スポット',
-              ),
-              const SizedBox(width: 8),
-              _HeaderChip(
-                icon: Icons.today_rounded,
-                label: '${sortedDays.length}日間',
-              ),
-            ],
           ),
-          const SizedBox(height: 4),
         ],
       ),
     );
+  }
+
+  String _resolveIconName(String? imageUrl, String title) {
+    if (imageUrl != null && imageUrl.startsWith('icon:')) {
+      return imageUrl.substring(5);
+    }
+    return TripIconAssets.fromTitle(title);
   }
 
   String? _headerDateLabel() {

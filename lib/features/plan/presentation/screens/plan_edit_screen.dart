@@ -838,7 +838,9 @@ class _PlanEditScreenState extends ConsumerState<PlanEditScreen> {
                         const SizedBox(width: 4),
                         Text(
                           _startDate != null
-                              ? '${_startDate!.month}/${_startDate!.day} - ${_endDate!.month}/${_endDate!.day}'
+                              ? _endDate != null
+                                  ? '${_startDate!.month}/${_startDate!.day} - ${_endDate!.month}/${_endDate!.day}'
+                                  : '${_startDate!.month}/${_startDate!.day}〜'
                               : '日程を設定',
                           style: AppTypography.caption.copyWith(
                             color: _startDate != null ? AppColors.accent : AppColors.textSecondary,

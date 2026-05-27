@@ -1375,7 +1375,7 @@ class _TripCard extends ConsumerWidget {
     return AppCard(
       onTap: onTap,
       margin: margin,
-      padding: const EdgeInsets.all(AppSizes.paddingL),
+      padding: const EdgeInsets.symmetric(horizontal: AppSizes.paddingM, vertical: AppSizes.paddingM),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -1436,8 +1436,8 @@ class _TripCoverImage extends StatelessWidget {
   const _TripCoverImage({required this.trip});
   final TripModel trip;
 
-  static const _size = 80.0;
-  static const _radius = 18.0;
+  static const _size = 96.0;
+  static const _radius = 20.0;
 
   @override
   Widget build(BuildContext context) {
